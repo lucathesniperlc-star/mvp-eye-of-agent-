@@ -1,0 +1,8 @@
+"ID","Requirement","Priority"
+"FR-10.1","Ingest runtime, identity, cloud, SaaS telemetry","P1"
+"FR-10.2","Detect prompt injection, exfiltration, credential abuse","P1"
+"FR-10.3","Build behavioral baselines for agents","P2"
+"FR-10.4","Correlate events into incidents","P1"
+"FR-10.5","Provide investigation workspace with timeline and evidence","P1"
+"FR-10.6","Support containment: quarantine, revoke, rotate, block","P1"
+"FR-10.7","Integrate with SOAR, PagerDuty, Slack, Teams","P1"

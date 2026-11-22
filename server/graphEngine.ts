@@ -80,6 +80,43 @@ export function findSensitiveExposurePaths(
             ? agentNode.riskLevel ?? 'critical'
             : 'high';
 
+        const isShadow = agentNode.metadata?.type === 'Shadow AI';
+        const hasToolHop = current.steps.some(
+          (s) => s.nodeType === 'Tool' && s.label === 'export_payroll'
+        );
+        const pathState: ExposureTraversalResult['pathState'] =
+          isShadow || hasToolHop
+            ? 'anomalous'
+            : riskLevel === 'critical' || riskLevel === 'high'
+              ? 'active'
+              : 'observed';
+
+        const externalDestination: ExposureTraversalResult['externalDestination'] = isShadow
+          ? {
+              label: 'External Webhook / OSS Unmanaged',
+              category: 'external_webhook',
+              egressRisk: 'critical',
+            }
+          : agentNode.id === 'agent_finance_copilot' ||
+              agentNode.id === 'agent_support' ||
+              agentNode.id === 'agent_recruiting'
+            ? {
+                label: 'External Frontier LLM (OpenAI / Anthropic API)',
+                category: 'external_llm',
+                egressRisk: riskLevel === 'critical' ? 'critical' : 'high',
+              }
+            : agentNode.id === 'agent_procurement'
+              ? {
+                  label: 'Google Vertex AI Endpoint',
+                  category: 'external_llm',
+                  egressRisk: 'high',
+                }
+              : {
+                  label: 'Internal / Managed Cloud Endpoint',
+                  category: 'internal_only',
+                  egressRisk: 'medium',
+                };
+
         results.push({
           pathId: `path_${agentNode.id}_${node.id}_${current.steps.length}`,
           tenantId,
@@ -90,6 +127,8 @@ export function findSensitiveExposurePaths(
           targetSensitivity: node.sensitivity,
           hopCount: current.steps.length - 1,
           riskLevel,
+          pathState,
+          externalDestination,
           steps: current.steps,
         });
         // Continue looking for deeper Data objects if current is Data source -> CONTAINS -> Data object

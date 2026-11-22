@@ -1,0 +1,5 @@
+"Tier","Target customer","Includes"
+"Starter","Small teams","1 cloud, 1 IdP, 10 agents, basic compliance"
+"Growth","Mid-market","Multi-cloud, 100 agents, runtime enforcement, remediation"
+"Enterprise","Large enterprises","Unlimited agents, all providers, vertical packs, premium support"
+"MSSP","Managed service providers","Multi-tenant, white-label, fleet management"

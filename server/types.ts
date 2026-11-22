@@ -137,6 +137,12 @@ export interface ExposureTraversalResult {
   targetSensitivity: string;
   hopCount: number;
   riskLevel: 'critical' | 'high' | 'medium' | 'low';
+  pathState?: 'potential' | 'observed' | 'active' | 'anomalous' | 'remediated';
+  externalDestination?: {
+    label: string;
+    category: 'external_llm' | 'external_webhook' | 'saas_api' | 'internal_only';
+    egressRisk: 'critical' | 'high' | 'medium' | 'low';
+  };
   steps: {
     nodeId: string;
     nodeType: GraphNodeType;

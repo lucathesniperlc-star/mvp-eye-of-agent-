@@ -1,0 +1,8 @@
+"Capability","Priority","What to build"
+"Remediation catalog","P0","Identity, permission, tool, model, data actions"
+"Impact simulation","P0","Blast radius, affected users, risk reduction"
+"Approval workflow","P0","Security, data owner, agent owner"
+"Execution engine","P0","Idempotent, scoped changes"
+"Verification","P0","Rescan and runtime validation"
+"Rollback","P0","Safe reversal where possible"
+"Guardrails","P0","Allowlist, rate limits, change freezes"

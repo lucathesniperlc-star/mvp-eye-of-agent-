@@ -627,6 +627,150 @@ export const LandingPage: React.FC<LandingPageProps> = ({ onLaunchDemo }) => {
           </div>
         </section>
 
+        {/* 6b. 6 Core Questions, Ecosystem Coverage & Commercial Tiers */}
+        <section className="border-t border-white/[0.08] py-20">
+          <div className="mx-auto max-w-7xl px-6 space-y-16">
+            {/* 6 Core Questions */}
+            <div>
+              <p className="text-xs font-medium text-sky-400">Platform Mandate</p>
+              <h2 className="mt-2 font-display text-2xl font-semibold tracking-tight text-white">
+                Six questions every security, AI, and compliance leader must answer.
+              </h2>
+              <div className="mt-6 grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
+                {[
+                  { q: '01 · What AI agents exist?', a: 'Auto-discover sanctioned, unowned, and shadow AI across Entra ID, AWS, Azure, GCP, GitHub, and MCP.' },
+                  { q: '02 · What cyber risks do they create?', a: 'Score blast radius using our explainable 6-factor model across privilege, autonomy, and governance.' },
+                  { q: '03 · What sensitive data can they reach?', a: 'Traverse identity → permission → MCP tool → PII/PHI/PCI store → external egress in one graph.' },
+                  { q: '04 · What are they doing right now?', a: 'Inspect inline PEP/PDP telemetry across 11 model providers with zero raw prompt retention.' },
+                  { q: '05 · Who must fix a risk?', a: 'Assign accountable owners, enforce SLAs, route Jira/ServiceNow tickets, and verify on next sync.' },
+                  { q: '06 · Are we compliant?', a: 'Map controls and SHA-256 hash-chained evidence to SOC 2, ISO 27001/42001, GDPR, and EU AI Act.' },
+                ].map((item) => (
+                  <div
+                    key={item.q}
+                    className="rounded-xl border border-white/[0.08] bg-[#11151D] p-4"
+                  >
+                    <p className="font-mono text-xs font-semibold text-sky-400">{item.q}</p>
+                    <p className="mt-1.5 text-xs leading-relaxed text-slate-300">{item.a}</p>
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            {/* 11 AI Providers & 8 Agent Frameworks + Vertical Policy Packs */}
+            <div className="grid grid-cols-1 gap-8 lg:grid-cols-12">
+              <div className="rounded-xl border border-white/[0.08] bg-[#11151D] p-6 lg:col-span-7 space-y-5">
+                <div>
+                  <p className="text-xs font-medium text-sky-400">Universal AI Runtime Coverage</p>
+                  <h3 className="mt-1 font-display text-lg font-semibold text-white">
+                    11 AI Providers &amp; 8 Agent Frameworks Supported
+                  </h3>
+                </div>
+                <div>
+                  <p className="text-[11px] font-medium uppercase tracking-wider text-slate-400">
+                    Model &amp; Cloud AI Providers (11)
+                  </p>
+                  <p className="mt-2 font-mono text-xs leading-relaxed text-slate-200">
+                    OpenAI · Anthropic · Google Gemini / Vertex AI · Azure OpenAI · AWS Bedrock · Cohere · Mistral · Groq · Together AI · Hugging Face · Ollama / Self-Hosted
+                  </p>
+                </div>
+                <div className="border-t border-white/[0.08] pt-4">
+                  <p className="text-[11px] font-medium uppercase tracking-wider text-slate-400">
+                    Discovered Agent Frameworks &amp; Runtimes (8)
+                  </p>
+                  <p className="mt-2 font-mono text-xs leading-relaxed text-slate-200">
+                    LangGraph · CrewAI · AutoGen · OpenAI Agents SDK · Microsoft Copilot Studio · AWS Bedrock Agents · Google Vertex AI Agent Builder · Custom MCP Runtime
+                  </p>
+                </div>
+              </div>
+
+              <div className="rounded-xl border border-white/[0.08] bg-[#11151D] p-6 lg:col-span-5 space-y-4">
+                <div>
+                  <p className="text-xs font-medium text-emerald-400">10 Industry Vertical Policy Packs</p>
+                  <h3 className="mt-1 font-display text-lg font-semibold text-white">
+                    One-click domain guardrails
+                  </h3>
+                </div>
+                <p className="text-xs leading-relaxed text-slate-400">
+                  Pre-built YAML enforcement rules and framework mappings tailored for regulated workloads:
+                </p>
+                <div className="grid grid-cols-2 gap-2 font-mono text-[11px] text-slate-200">
+                  {[
+                    'FinTech & Payments',
+                    'SaaS & Tech',
+                    'Healthcare (HIPAA)',
+                    'Insurance',
+                    'Legal & Audit',
+                    'Manufacturing',
+                    'Energy & Utilities',
+                    'Government / GovCloud',
+                    'Retail & Commerce',
+                    'Higher Education',
+                  ].map((v) => (
+                    <div
+                      key={v}
+                      className="rounded border border-white/[0.08] bg-[#090B10] px-2.5 py-1.5 truncate"
+                    >
+                      {v}
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </div>
+
+            {/* 4 Commercial Packaging Tiers */}
+            <div>
+              <p className="text-xs font-medium text-slate-400">Commercial Packaging</p>
+              <h2 className="mt-2 font-display text-2xl font-semibold tracking-tight text-white">
+                Built to start in 15 minutes and scale across global enterprises.
+              </h2>
+              <div className="mt-6 grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
+                {[
+                  {
+                    tier: 'Starter',
+                    audience: 'AI-first teams & startups',
+                    price: 'Up to 25 agents',
+                    features: 'Read-only Entra/AWS/GitHub discovery, exposure graph, 6-factor risk scoring, SOC 2 starter mapping.',
+                  },
+                  {
+                    tier: 'Growth',
+                    audience: 'Mid-market security & AI teams',
+                    price: 'Up to 250 agents',
+                    features: 'Jira/ServiceNow routing, approval-gated remediation, observe-only PEP/PDP gateway, ISO 27001/42001.',
+                  },
+                  {
+                    tier: 'Enterprise',
+                    audience: 'Regulated enterprises & CISOs',
+                    price: 'Unlimited agents',
+                    features: 'Enforced PEP/PDP (8 actions), SOAR playbooks, SAML 2.0 + SCIM, vertical packs, auditor-scoped packs.',
+                  },
+                  {
+                    tier: 'MSSP',
+                    audience: 'Managed security & advisory partners',
+                    price: 'Multi-tenant console',
+                    features: 'Cross-tenant posture fleet view, delegated RBAC, white-labeled executive audit exports & SLAs.',
+                  },
+                ].map((pkg) => (
+                  <div
+                    key={pkg.tier}
+                    className="rounded-xl border border-white/[0.08] bg-[#11151D] p-5 flex flex-col justify-between"
+                  >
+                    <div>
+                      <div className="flex items-center justify-between gap-2">
+                        <h3 className="font-display text-base font-semibold text-white">
+                          {pkg.tier}
+                        </h3>
+                        <span className="font-mono text-[11px] text-sky-400">{pkg.price}</span>
+                      </div>
+                      <p className="mt-1 text-[11px] text-slate-400">{pkg.audience}</p>
+                      <p className="mt-3 text-xs leading-relaxed text-slate-300">{pkg.features}</p>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          </div>
+        </section>
+
         {/* 7. Final CTA */}
         <section className="border-t border-white/[0.08] py-20">
           <div className="mx-auto max-w-4xl px-6 text-center">

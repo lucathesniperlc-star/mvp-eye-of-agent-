@@ -121,6 +121,12 @@ export interface GraphTraversalPath {
   targetSensitivity: string;
   hopCount: number;
   riskLevel: RiskLevel;
+  pathState?: ExposurePathState;
+  externalDestination?: {
+    label: string;
+    category: 'external_llm' | 'external_webhook' | 'saas_api' | 'internal_only';
+    egressRisk: RiskLevel;
+  };
   steps: {
     nodeId: string;
     nodeType: string;
@@ -205,6 +211,10 @@ export interface Agent {
   ownerTeam: string;
   type: AgentType;
   status: AgentStatus;
+  lifecycleState?: AgentLifecycleState;
+  confidenceScore?: number;
+  framework?: AgentFramework;
+  environment?: AgentEnvironment;
   riskScore: number;
   riskLevel: RiskLevel;
   riskAssessment?: RiskFactorAssessment;
@@ -228,6 +238,9 @@ export interface McpServer {
   connectedAgentIds: string[];
   risk: RiskLevel;
   transport: 'stdio' | 'sse' | 'streamable-http';
+  approvalStatus?: McpApprovalStatus;
+  configuredVsObserved?: ConfiguredVsObserved;
+  provider?: string;
 }
 
 export interface ModelAsset {
@@ -236,7 +249,11 @@ export interface ModelAsset {
   provider: string;
   usedByAgentIds: string[];
   sensitivity: string;
-  promptRetention: 'Zero retention' | 'Enterprise DPA';
+  promptRetention: 'Zero retention' | 'Enterprise DPA' | 'Unverified local';
+  approvalStatus?: ModelApprovalStatus;
+  configuredVsObserved?: ConfiguredVsObserved;
+  adapterType?: string;
+  region?: string;
 }
 
 export interface DataSource {
@@ -649,3 +666,173 @@ export interface DemoRequestRecord {
   submittedAt: string;
   status: 'received' | 'scheduled';
 }
+
+export type AgentLifecycleState =
+  | 'discovered'
+  | 'under_review'
+  | 'verified'
+  | 'sanctioned'
+  | 'unsanctioned'
+  | 'retired';
+
+export type AgentFramework =
+  | 'LangChain'
+  | 'LangGraph'
+  | 'CrewAI'
+  | 'AutoGen'
+  | 'Copilot Studio'
+  | 'Semantic Kernel'
+  | 'Azure AI Foundry'
+  | 'MCP'
+  | 'OpenAI Assistants'
+  | 'Custom';
+
+export type AgentEnvironment = 'production' | 'staging' | 'development' | 'shadow';
+
+export type ModelApprovalStatus = 'approved' | 'unapproved' | 'pending_review' | 'restricted';
+
+export type McpApprovalStatus = 'approved' | 'unapproved' | 'disabled';
+
+export type ConfiguredVsObserved =
+  | 'configured_and_observed'
+  | 'observed_shadow_only'
+  | 'configured_unused';
+
+export type ExposurePathState =
+  | 'potential'
+  | 'observed'
+  | 'active'
+  | 'anomalous'
+  | 'remediated';
+
+export type VerticalPackId =
+  | 'fintech'
+  | 'saas_tech'
+  | 'healthcare'
+  | 'insurance'
+  | 'legal'
+  | 'manufacturing'
+  | 'energy'
+  | 'government'
+  | 'retail'
+  | 'education';
+
+export interface VerticalPolicyPack {
+  id: VerticalPackId;
+  name: string;
+  priority: 'P0' | 'P1' | 'P2';
+  frameworks: string[];
+  summary: string;
+  keyRisks: string[];
+  defaultRules: Array<{
+    name: string;
+    scope: string;
+    condition: string;
+    action: PolicyAction;
+  }>;
+  gatewayYamlTemplate: string;
+}
+
+export interface AiProviderAdapterMeta {
+  id: string;
+  name: string;
+  priority: 'P0' | 'P1' | 'P2';
+  integrationCapabilities: string;
+  protocol:
+    | 'REST / SSE'
+    | 'Managed Identity'
+    | 'Cloud IAM / API'
+    | 'OpenAI-Compatible'
+    | 'Local Socket / HTTP';
+}
+
+export interface PolicyException {
+  id: string;
+  tenantId: string;
+  policyId: string;
+  policyName: string;
+  agentId: string;
+  agentName: string;
+  justification: string;
+  approvedBy: string;
+  expiresAt: string;
+  status: 'active' | 'expired' | 'revoked';
+  createdAt: string;
+}
+
+export interface GatewayRuntimeConfig {
+  failoverMode: 'fail_open' | 'fail_closed';
+  responseInspectionEnabled: boolean;
+  promptInjectionGuardEnabled: boolean;
+  timeoutMs: number;
+  updatedAt: string;
+  updatedBy: string;
+}
+
+export type ContainmentActionId =
+  | 'revoke_oauth_grant'
+  | 'disable_api_key'
+  | 'rotate_client_secret'
+  | 'remove_privileged_group'
+  | 'remove_unapproved_model'
+  | 'disable_unapproved_mcp'
+  | 'restrict_data_access'
+  | 'quarantine_agent';
+
+export interface ContainmentActionCatalogItem {
+  id: ContainmentActionId;
+  label: string;
+  targetType: 'identity' | 'credential' | 'model' | 'mcp' | 'data' | 'agent';
+  requiresApproval: boolean;
+  reversible: boolean;
+  description: string;
+}
+
+export interface SecurityIncident {
+  id: string;
+  tenantId: string;
+  title: string;
+  severity: RiskLevel;
+  status: 'open' | 'investigating' | 'contained' | 'resolved';
+  agentId: string;
+  agentName: string;
+  correlatedFindingIds: string[];
+  correlatedEventIds: string[];
+  signalSummary: string;
+  recommendedActions: ContainmentActionId[];
+  executedActions: Array<{
+    action: ContainmentActionId;
+    label: string;
+    executedAt: string;
+    executedBy: string;
+    approved: boolean;
+    dryRun: boolean;
+    evidenceId: string;
+    summary: string;
+  }>;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface ComplianceException {
+  id: string;
+  tenantId: string;
+  controlId: string;
+  controlCode: string;
+  framework: ComplianceFramework;
+  reason: string;
+  compensatingControl: string;
+  approvedBy: string;
+  expiresAt: string;
+  status: 'active' | 'revoked';
+  createdAt: string;
+}
+
+export type PersonaLensId =
+  | 'ciso'
+  | 'analyst'
+  | 'ai_owner'
+  | 'compliance'
+  | 'auditor'
+  | 'mssp';
+

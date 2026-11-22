@@ -34,12 +34,16 @@ import type {
   Agent,
   AgentStatus,
   AgentType,
+  AiProviderAdapterMeta,
   AllInOneRunResult,
   AuditChainIntegrity,
   AuditEventRecord,
   AuthSessionState,
+  ComplianceException,
   ComplianceFramework,
   Connector,
+  ContainmentActionCatalogItem,
+  ContainmentActionId,
   ControlItem,
   DataSource,
   DemoRequestRecord,
@@ -50,15 +54,19 @@ import type {
   Finding,
   GatewayEvent,
   GatewayPolicyDefinition,
+  GatewayRuntimeConfig,
   GraphTraversalPath,
   KillSwitchState,
+  McpApprovalStatus,
   McpServer,
+  ModelApprovalStatus,
   ModelAsset,
   PlatformHardeningItem,
   PlaybookDefinition,
   PlaybookExecutionRecord,
   PlaybookId,
   PolicyAction,
+  PolicyException,
   PolicyMode,
   PolicyRule,
   PolicySimulationEvent,
@@ -70,7 +78,10 @@ import type {
   RolloutStage,
   ScimDirectoryUser,
   ScreenId,
+  SecurityIncident,
   Tenant,
+  VerticalPackId,
+  VerticalPolicyPack,
 } from './types/security';
 import { computeDashboardMetrics } from './utils/riskEngine';
 
@@ -124,6 +135,12 @@ export interface EnterpriseStatePayload {
   auditIntegrity: AuditChainIntegrity;
   auditRetentionDays: number;
   lastAllInOneRun?: AllInOneRunResult;
+  gatewayRuntimeConfig?: GatewayRuntimeConfig;
+  incidents?: SecurityIncident[];
+  containmentCatalog?: ContainmentActionCatalogItem[];
+  activeVerticalPacks?: VerticalPackId[];
+  verticalPacksCatalog?: VerticalPolicyPack[];
+  providerAdapters?: AiProviderAdapterMeta[];
 }
 
 const DEFAULT_RETENTION_STATE: RetentionPolicyConfig = {
@@ -145,9 +162,11 @@ interface WorkspacePayload {
   models: ModelAsset[];
   dataSources: DataSource[];
   findings: Finding[];
+  incidents?: SecurityIncident[];
   controls: ControlItem[];
   evidence: EvidenceItem[];
   evidenceRecords?: EvidenceRecord[];
+  complianceExceptions?: ComplianceException[];
   activity: ActivityEvent[];
   trendSeries: RiskTrendPoint[];
   connectors: Connector[];
@@ -159,7 +178,16 @@ interface WorkspacePayload {
     gatewayPolicies?: GatewayPolicyDefinition[];
     gatewayEvents?: GatewayEvent[];
     retentionConfig?: RetentionPolicyConfig;
+    activeVerticalPacks?: VerticalPackId[];
+    verticalPacksCatalog?: VerticalPolicyPack[];
+    providerAdapters?: AiProviderAdapterMeta[];
+    policyExceptions?: PolicyException[];
+    gatewayRuntimeConfig?: GatewayRuntimeConfig;
   };
+  activeVerticalPacks?: VerticalPackId[];
+  verticalPacksCatalog?: VerticalPolicyPack[];
+  providerAdapters?: AiProviderAdapterMeta[];
+  containmentCatalog?: ContainmentActionCatalogItem[];
   auditEvents: AuditEventRecord[];
   enterprise?: EnterpriseStatePayload;
   demoRequests?: DemoRequestRecord[];
@@ -210,6 +238,16 @@ export default function App() {
   const [auditEvents, setAuditEvents] = useState<AuditEventRecord[]>([]);
   const [enterpriseState, setEnterpriseState] = useState<EnterpriseStatePayload | null>(null);
   const [demoRequests, setDemoRequests] = useState<DemoRequestRecord[]>([]);
+  const [incidents, setIncidents] = useState<SecurityIncident[]>([]);
+  const [complianceExceptions, setComplianceExceptions] = useState<ComplianceException[]>([]);
+  const [activeVerticalPacks, setActiveVerticalPacks] = useState<VerticalPackId[]>([]);
+  const [verticalPacksCatalog, setVerticalPacksCatalog] = useState<VerticalPolicyPack[]>([]);
+  const [providerAdapters, setProviderAdapters] = useState<AiProviderAdapterMeta[]>([]);
+  const [containmentCatalog, setContainmentCatalog] = useState<ContainmentActionCatalogItem[]>([]);
+  const [policyExceptions, setPolicyExceptions] = useState<PolicyException[]>([]);
+  const [gatewayRuntimeConfig, setGatewayRuntimeConfig] = useState<
+    GatewayRuntimeConfig | undefined
+  >(undefined);
   const [rbacNotice, setRbacNotice] = useState<string>('');
 
   const [tourActive, setTourActive] = useState<boolean>(false);
@@ -227,9 +265,11 @@ export default function App() {
     if (data.models?.length) setModels(data.models);
     if (data.dataSources?.length) setDataSources(data.dataSources);
     setFindings(data.findings);
+    setIncidents(data.incidents ?? data.enterprise?.incidents ?? []);
     if (data.controls?.length) setControls(data.controls);
     if (data.evidence?.length) setEvidenceItems(data.evidence);
     setEvidenceRecords(data.evidenceRecords ?? []);
+    setComplianceExceptions(data.complianceExceptions ?? []);
     setConnectors(data.connectors);
     setActivity(data.activity);
     setTrendSeries(data.trendSeries);
@@ -242,6 +282,29 @@ export default function App() {
     if (data.policy.retentionConfig) {
       setRetentionConfig(data.policy.retentionConfig);
     }
+    setActiveVerticalPacks(
+      data.activeVerticalPacks ??
+        data.policy.activeVerticalPacks ??
+        data.enterprise?.activeVerticalPacks ??
+        []
+    );
+    setVerticalPacksCatalog(
+      data.verticalPacksCatalog ??
+        data.policy.verticalPacksCatalog ??
+        data.enterprise?.verticalPacksCatalog ??
+        []
+    );
+    setProviderAdapters(
+      data.providerAdapters ??
+        data.policy.providerAdapters ??
+        data.enterprise?.providerAdapters ??
+        []
+    );
+    setContainmentCatalog(data.containmentCatalog ?? data.enterprise?.containmentCatalog ?? []);
+    setPolicyExceptions(data.policy.policyExceptions ?? []);
+    setGatewayRuntimeConfig(
+      data.policy.gatewayRuntimeConfig ?? data.enterprise?.gatewayRuntimeConfig
+    );
     setAuditEvents(data.auditEvents ?? []);
     if (data.enterprise) {
       setEnterpriseState(data.enterprise);
@@ -807,8 +870,10 @@ export default function App() {
     tool: string;
     mcpServer?: string;
     promptText?: string;
+    responseText?: string;
     targetResource?: string;
     requestedActionOverride?: EnforcementAction;
+    simulatePdpUnavailable?: boolean;
   }): Promise<PepEvaluateResponse | null> => {
     setRbacNotice('');
     const res = await fetch('/api/enterprise/pep/evaluate', {
@@ -1067,6 +1132,210 @@ export default function App() {
     return result;
   };
 
+  const handleReviewAgentLifecycle = async (
+    agentId: string,
+    payload: {
+      action: 'verify' | 'sanction' | 'unsanction' | 'retire';
+      owner?: string;
+      ownerTeam?: string;
+      reason?: string;
+    }
+  ): Promise<Agent | null> => {
+    setRbacNotice('');
+    const res = await fetch(`/api/agents/${agentId}/lifecycle`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+    const data = await res.json();
+    if (!res.ok) {
+      const msg = data.error || 'Agent lifecycle update denied';
+      setRbacNotice(msg);
+      throw new Error(msg);
+    }
+    await loadWorkspace();
+    return (data.agent as Agent) ?? null;
+  };
+
+  const handleActivateVerticalPack = async (packId: VerticalPackId, install: boolean) => {
+    setRbacNotice('');
+    const res = await fetch(`/api/vertical-packs/${packId}/activate`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ install }),
+    });
+    if (!res.ok) {
+      const err = await res.json();
+      setRbacNotice(err.error || 'Vertical policy pack update denied');
+      return;
+    }
+    await loadWorkspace();
+  };
+
+  const handleUpdateModelApproval = async (
+    modelId: string,
+    approvalStatus: ModelApprovalStatus
+  ) => {
+    setRbacNotice('');
+    const res = await fetch(`/api/registry/models/${modelId}/approval`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ approvalStatus }),
+    });
+    if (!res.ok) {
+      const err = await res.json();
+      setRbacNotice(err.error || 'Model registry update denied');
+      return;
+    }
+    await loadWorkspace();
+  };
+
+  const handleUpdateMcpApproval = async (mcpId: string, approvalStatus: McpApprovalStatus) => {
+    setRbacNotice('');
+    const res = await fetch(`/api/registry/mcp/${mcpId}/approval`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ approvalStatus }),
+    });
+    if (!res.ok) {
+      const err = await res.json();
+      setRbacNotice(err.error || 'MCP registry update denied');
+      return;
+    }
+    await loadWorkspace();
+  };
+
+  const handleCreatePolicyException = async (payload: {
+    policyId: string;
+    agentId: string;
+    justification: string;
+    expiresInDays?: number;
+  }) => {
+    setRbacNotice('');
+    const res = await fetch('/api/policy/exceptions', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+    const data = await res.json();
+    if (!res.ok) {
+      const msg = data.error || 'Unable to grant policy exception';
+      setRbacNotice(msg);
+      throw new Error(msg);
+    }
+    await loadWorkspace();
+  };
+
+  const handleRevokePolicyException = async (exceptionId: string) => {
+    setRbacNotice('');
+    const res = await fetch(`/api/policy/exceptions/${exceptionId}/revoke`, {
+      method: 'POST',
+    });
+    if (!res.ok) {
+      const err = await res.json();
+      setRbacNotice(err.error || 'Unable to revoke policy exception');
+      return;
+    }
+    await loadWorkspace();
+  };
+
+  const handleUpdateGatewayConfig = async (updates: {
+    failoverMode?: 'fail_open' | 'fail_closed';
+    responseInspectionEnabled?: boolean;
+    promptInjectionGuardEnabled?: boolean;
+  }) => {
+    setRbacNotice('');
+    const res = await fetch('/api/enterprise/gateway-config', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(updates),
+    });
+    if (!res.ok) {
+      const err = await res.json();
+      setRbacNotice(err.error || 'Gateway configuration update denied');
+      return;
+    }
+    await loadWorkspace();
+  };
+
+  const handleContainIncident = async (
+    incidentId: string,
+    payload: { action: ContainmentActionId; approve: boolean; dryRun: boolean }
+  ): Promise<{ incident: SecurityIncident; dryRunDiff?: string } | null> => {
+    setRbacNotice('');
+    const res = await fetch(`/api/incidents/${incidentId}/contain`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+    const data = await res.json();
+    if (!res.ok) {
+      const msg = data.error || 'Incident containment failed';
+      setRbacNotice(msg);
+      throw new Error(msg);
+    }
+    await loadWorkspace();
+    return data as { incident: SecurityIncident; dryRunDiff?: string };
+  };
+
+  const handleCreateComplianceException = async (payload: {
+    controlId: string;
+    reason: string;
+    compensatingControl: string;
+    expiresInDays?: number;
+  }): Promise<ComplianceException | null> => {
+    setRbacNotice('');
+    const res = await fetch('/api/compliance/exceptions', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+    const data = await res.json();
+    if (!res.ok) {
+      const msg = data.error || 'Compliance exception denied';
+      setRbacNotice(msg);
+      throw new Error(msg);
+    }
+    await loadWorkspace();
+    return (data.exception as ComplianceException) ?? null;
+  };
+
+  const handleRevokeComplianceException = async (exceptionId: string) => {
+    setRbacNotice('');
+    const res = await fetch(`/api/compliance/exceptions/${exceptionId}/revoke`, {
+      method: 'POST',
+    });
+    if (!res.ok) {
+      const err = await res.json();
+      setRbacNotice(err.error || 'Unable to revoke compliance exception');
+      return;
+    }
+    await loadWorkspace();
+  };
+
+  const handleExportComplianceCsv = async (
+    framework: ComplianceFramework | 'all'
+  ): Promise<{ filename: string; csvContent: string; rowCount: number } | null> => {
+    setRbacNotice('');
+    const res = await fetch('/api/compliance/export-csv', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ framework }),
+    });
+    if (!res.ok) {
+      const err = await res.json();
+      setRbacNotice(err.error || 'Compliance CSV export denied');
+      return null;
+    }
+    const data = (await res.json()) as {
+      filename: string;
+      csvContent: string;
+      rowCount: number;
+    };
+    await loadWorkspace();
+    return data;
+  };
+
   if (viewMode === 'landing') {
     return <LandingPage onLaunchDemo={handleLaunchDemo} />;
   }
@@ -1132,6 +1401,8 @@ export default function App() {
           dataSources={dataSources}
           activity={activity}
           trendSeries={trendSeries}
+          activeVerticalPacks={activeVerticalPacks}
+          verticalPacksCatalog={verticalPacksCatalog}
           onSelectAgent={(id) => {
             setSelectedAgentId(id);
             setActiveScreen('agent-detail');
@@ -1173,6 +1444,7 @@ export default function App() {
           dataSources={dataSources}
           canManageAgents={canManageAgents}
           onCreateAgent={handleCreateAgent}
+          onReviewAgentLifecycle={handleReviewAgentLifecycle}
           onSelectAgent={(id) => {
             setSelectedAgentId(id);
             setActiveScreen('agent-detail');
@@ -1189,6 +1461,7 @@ export default function App() {
           findings={findings}
           canManageAgents={canManageAgents}
           onUpdateAgentGovernance={handleUpdateAgentGovernance}
+          onReviewAgentLifecycle={handleReviewAgentLifecycle}
           onBack={() => setActiveScreen('inventory')}
           onViewExposurePath={(id) => {
             setSelectedAgentId(id);
@@ -1216,6 +1489,8 @@ export default function App() {
           tenantId={tenantRecord.id}
           findings={findings}
           agents={agents}
+          incidents={incidents}
+          containmentCatalog={containmentCatalog}
           onCreateRemediationTicket={handleCreateRemediationTicket}
           onTicketAllOpenFindings={handleTicketAllOpenFindings}
           onRunDryRun={handleRunDryRun}
@@ -1224,6 +1499,7 @@ export default function App() {
           onRollbackRemediation={handleRollbackRemediation}
           onVerifyAndClose={handleVerifyAndCloseFinding}
           onRecalculateAgentRisk={handleRecalculateAgentRisk}
+          onContainIncident={handleContainIncident}
         />
       )}
 
@@ -1233,8 +1509,12 @@ export default function App() {
           controls={controls}
           evidence={evidenceItems}
           evidenceRecords={evidenceRecords}
+          complianceExceptions={complianceExceptions}
           onExportAuditPack={handleExportAuditPack}
+          onExportComplianceCsv={handleExportComplianceCsv}
           onAttestControl={handleAttestControl}
+          onCreateComplianceException={handleCreateComplianceException}
+          onRevokeComplianceException={handleRevokeComplianceException}
         />
       )}
 
@@ -1248,6 +1528,8 @@ export default function App() {
           onCreateGatewayPolicy={handleCreateGatewayPolicy}
           simulationEvents={simulationEvents}
           agents={agents}
+          models={models}
+          mcpServers={mcpServers}
           gatewayPolicies={gatewayPolicies}
           gatewayEvents={gatewayEvents}
           retentionConfig={retentionConfig}
@@ -1255,6 +1537,11 @@ export default function App() {
           killSwitch={enterpriseState?.killSwitch}
           playbooks={enterpriseState?.playbooks}
           playbookExecutions={enterpriseState?.playbookExecutions}
+          activeVerticalPacks={activeVerticalPacks}
+          verticalPacksCatalog={verticalPacksCatalog}
+          providerAdapters={providerAdapters}
+          policyExceptions={policyExceptions}
+          gatewayRuntimeConfig={gatewayRuntimeConfig}
           onInspectGateway={handleInspectGateway}
           onEvaluatePep={handleEvaluatePep}
           onChangeRolloutStage={handleChangeRolloutStage}
@@ -1264,6 +1551,12 @@ export default function App() {
           onApprovePlaybookExecution={handleApprovePlaybookExecution}
           onRollbackPlaybookExecution={handleRollbackPlaybookExecution}
           onToggleRetentionOptIn={handleToggleRetentionOptIn}
+          onActivateVerticalPack={handleActivateVerticalPack}
+          onUpdateModelApproval={handleUpdateModelApproval}
+          onUpdateMcpApproval={handleUpdateMcpApproval}
+          onCreatePolicyException={handleCreatePolicyException}
+          onRevokePolicyException={handleRevokePolicyException}
+          onUpdateGatewayConfig={handleUpdateGatewayConfig}
         />
       )}
 

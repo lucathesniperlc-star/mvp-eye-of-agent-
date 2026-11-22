@@ -11,10 +11,13 @@ import {
 } from 'lucide-react';
 import type {
   Agent,
+  ContainmentActionCatalogItem,
+  ContainmentActionId,
   Finding,
   FindingStatus,
   RiskFactorInputs,
   RiskLevel,
+  SecurityIncident,
 } from '../types/security';
 import { FindingStatusLabel, RiskLabel } from './RiskIndicator';
 
@@ -22,6 +25,8 @@ interface FindingsViewProps {
   tenantId: string;
   findings: Finding[];
   agents?: Agent[];
+  incidents?: SecurityIncident[];
+  containmentCatalog?: ContainmentActionCatalogItem[];
   onCreateRemediationTicket: (
     findingId: string,
     payload: { provider: 'jira' | 'servicenow'; assignee: string; notifyChannels: string[] }
@@ -43,12 +48,18 @@ interface FindingsViewProps {
       overrides?: Partial<RiskFactorInputs>;
     }
   ) => Promise<void>;
+  onContainIncident?: (
+    incidentId: string,
+    payload: { action: ContainmentActionId; approve: boolean; dryRun: boolean }
+  ) => Promise<{ incident: SecurityIncident; dryRunDiff?: string } | null>;
 }
 
 export const FindingsView: React.FC<FindingsViewProps> = ({
   tenantId,
   findings,
   agents = [],
+  incidents = [],
+  containmentCatalog = [],
   onCreateRemediationTicket,
   onTicketAllOpenFindings,
   onRunDryRun,
@@ -57,13 +68,27 @@ export const FindingsView: React.FC<FindingsViewProps> = ({
   onRollbackRemediation,
   onVerifyAndClose,
   onRecalculateAgentRisk,
+  onContainIncident,
 }) => {
   const tenantFindings = findings.filter((f) => f.tenantId === tenantId);
+  const tenantIncidents = incidents.filter((i) => i.tenantId === tenantId);
+  const [activeTab, setActiveTab] = useState<'findings' | 'incidents'>('findings');
   const [severityFilter, setSeverityFilter] = useState<RiskLevel | 'all'>('all');
   const [statusFilter, setStatusFilter] = useState<FindingStatus | 'all'>('all');
   const [selectedFindingId, setSelectedFindingId] = useState<string>(
     tenantFindings[0]?.id ?? ''
   );
+  const [selectedIncidentId, setSelectedIncidentId] = useState<string>(
+    tenantIncidents[0]?.id ?? ''
+  );
+  const [selectedContainmentAction, setSelectedContainmentAction] =
+    useState<ContainmentActionId>('restrict_data_access');
+  const [containmentApproved, setContainmentApproved] = useState(false);
+  const [containmentBusy, setContainmentBusy] = useState(false);
+  const [containmentFeedback, setContainmentFeedback] = useState<{
+    kind: 'info' | 'error' | 'success';
+    text: string;
+  } | null>(null);
 
   const [ticketProvider, setTicketProvider] = useState<'jira' | 'servicenow'>('jira');
   const [ticketAssignee, setTicketAssignee] = useState('Cloud Security');
@@ -84,6 +109,8 @@ export const FindingsView: React.FC<FindingsViewProps> = ({
 
   const activeFinding =
     tenantFindings.find((f) => f.id === selectedFindingId) ?? filtered[0] ?? tenantFindings[0];
+  const activeIncident =
+    tenantIncidents.find((i) => i.id === selectedIncidentId) ?? tenantIncidents[0];
 
   const activeAgent = activeFinding
     ? agents.find((a) => a.id === activeFinding.agentId)
@@ -91,6 +118,34 @@ export const FindingsView: React.FC<FindingsViewProps> = ({
   const activeAssessment = activeAgent?.riskAssessment ?? activeFinding?.riskAssessment;
 
   const [recalcBusy, setRecalcBusy] = useState(false);
+
+  const handleRunContainment = async (dryRun: boolean) => {
+    if (!activeIncident || !onContainIncident) return;
+    setContainmentBusy(true);
+    setContainmentFeedback(null);
+    try {
+      const res = await onContainIncident(activeIncident.id, {
+        action: selectedContainmentAction,
+        approve: containmentApproved,
+        dryRun,
+      });
+      if (res) {
+        setContainmentFeedback({
+          kind: dryRun ? 'info' : 'success',
+          text: dryRun
+            ? res.dryRunDiff || `Dry-run impact previewed for ${selectedContainmentAction}.`
+            : `Executed containment action ${selectedContainmentAction} on ${activeIncident.agentName}.`,
+        });
+      }
+    } catch (err) {
+      setContainmentFeedback({
+        kind: 'error',
+        text: (err as Error).message || 'Containment action blocked.',
+      });
+    } finally {
+      setContainmentBusy(false);
+    }
+  };
 
   const handleRecalculateSignal = async (
     label: string,
@@ -157,65 +212,277 @@ export const FindingsView: React.FC<FindingsViewProps> = ({
       <div className="flex flex-wrap items-end justify-between gap-4">
         <div>
           <h1 className="font-display text-2xl font-semibold tracking-tight text-white">
-            Risk Findings &amp; Remediation
+            Risk Findings, Incidents &amp; Containment
           </h1>
           <p className="mt-1 text-sm text-slate-400">
-            Evidence-backed findings with Jira/ServiceNow routing, approval-gated dry-runs, rollback, and sync verification
+            Evidence-backed findings, correlated security incidents, 8 containment actions, dry-runs, and sync verification
           </p>
         </div>
 
         <div className="flex flex-wrap items-center gap-3">
-          <select
-            aria-label="Filter findings by severity"
-            value={severityFilter}
-            onChange={(e) => setSeverityFilter(e.target.value as RiskLevel | 'all')}
-            className="rounded-lg border border-white/15 bg-[#11151D] px-3 py-2 text-xs text-white focus:border-sky-500 focus:outline-none"
+          <div
+            role="tablist"
+            aria-label="Findings and incidents view"
+            className="flex items-center gap-1 rounded-lg border border-white/15 bg-[#11151D] p-1"
           >
-            <option value="all">All severities</option>
-            <option value="critical">Critical</option>
-            <option value="high">High</option>
-            <option value="medium">Medium</option>
-            <option value="low">Low</option>
-            <option value="informational">Informational</option>
-          </select>
-
-          <select
-            aria-label="Filter findings by status"
-            value={statusFilter}
-            onChange={(e) => setStatusFilter(e.target.value as FindingStatus | 'all')}
-            className="rounded-lg border border-white/15 bg-[#11151D] px-3 py-2 text-xs text-white focus:border-sky-500 focus:outline-none"
-          >
-            <option value="all">All statuses</option>
-            <option value="open">Open</option>
-            <option value="in_progress">In progress</option>
-            <option value="remediated">Remediated</option>
-          </select>
-
-          {onTicketAllOpenFindings && (
             <button
               type="button"
-              onClick={async () => {
-                const res = await onTicketAllOpenFindings(ticketProvider);
-                if (res) {
-                  setWorkflowFeedback({
-                    kind: 'success',
-                    text:
-                      res.createdCount > 0
-                        ? `Created ${res.createdCount} ${ticketProvider === 'servicenow' ? 'ServiceNow' : 'Jira'} ticket(s) for all open unticketed findings.`
-                        : 'All open findings already hold active remediation tickets.',
-                  });
-                }
-              }}
-              className="inline-flex items-center gap-1.5 rounded-lg border border-white/15 bg-[#11151D] px-3.5 py-2 text-xs font-medium text-white hover:border-sky-500/50 whitespace-nowrap"
+              role="tab"
+              aria-selected={activeTab === 'findings'}
+              onClick={() => setActiveTab('findings')}
+              className={`rounded-md px-3 py-1.5 text-xs font-semibold transition-colors whitespace-nowrap ${
+                activeTab === 'findings'
+                  ? 'bg-sky-500 text-slate-950'
+                  : 'text-slate-300 hover:text-white'
+              }`}
             >
-              <Ticket className="w-3.5 h-3.5 text-sky-400" aria-hidden="true" />
-              <span>Ticket all open</span>
+              Findings ({tenantFindings.length})
             </button>
+            <button
+              type="button"
+              role="tab"
+              aria-selected={activeTab === 'incidents'}
+              onClick={() => setActiveTab('incidents')}
+              className={`rounded-md px-3 py-1.5 text-xs font-semibold transition-colors whitespace-nowrap ${
+                activeTab === 'incidents'
+                  ? 'bg-sky-500 text-slate-950'
+                  : 'text-slate-300 hover:text-white'
+              }`}
+            >
+              Correlated Incidents ({tenantIncidents.length})
+            </button>
+          </div>
+
+          {activeTab === 'findings' && (
+            <>
+              <select
+                aria-label="Filter findings by severity"
+                value={severityFilter}
+                onChange={(e) => setSeverityFilter(e.target.value as RiskLevel | 'all')}
+                className="rounded-lg border border-white/15 bg-[#11151D] px-3 py-2 text-xs text-white focus:border-sky-500 focus:outline-none"
+              >
+                <option value="all">All severities</option>
+                <option value="critical">Critical</option>
+                <option value="high">High</option>
+                <option value="medium">Medium</option>
+                <option value="low">Low</option>
+                <option value="informational">Informational</option>
+              </select>
+
+              <select
+                aria-label="Filter findings by status"
+                value={statusFilter}
+                onChange={(e) => setStatusFilter(e.target.value as FindingStatus | 'all')}
+                className="rounded-lg border border-white/15 bg-[#11151D] px-3 py-2 text-xs text-white focus:border-sky-500 focus:outline-none"
+              >
+                <option value="all">All statuses</option>
+                <option value="open">Open</option>
+                <option value="in_progress">In progress</option>
+                <option value="remediated">Remediated</option>
+              </select>
+
+              {onTicketAllOpenFindings && (
+                <button
+                  type="button"
+                  onClick={async () => {
+                    const res = await onTicketAllOpenFindings(ticketProvider);
+                    if (res) {
+                      setWorkflowFeedback({
+                        kind: 'success',
+                        text:
+                          res.createdCount > 0
+                            ? `Created ${res.createdCount} ${ticketProvider === 'servicenow' ? 'ServiceNow' : 'Jira'} ticket(s) for all open unticketed findings.`
+                            : 'All open findings already hold active remediation tickets.',
+                      });
+                    }
+                  }}
+                  className="inline-flex items-center gap-1.5 rounded-lg border border-white/15 bg-[#11151D] px-3.5 py-2 text-xs font-medium text-white hover:border-sky-500/50 whitespace-nowrap"
+                >
+                  <Ticket className="w-3.5 h-3.5 text-sky-400" aria-hidden="true" />
+                  <span>Ticket all open</span>
+                </button>
+              )}
+            </>
           )}
         </div>
       </div>
 
-      <div className="grid grid-cols-1 gap-6 lg:grid-cols-12">
+      {activeTab === 'incidents' ? (
+        <div className="grid grid-cols-1 gap-6 lg:grid-cols-12">
+          <div className="rounded-xl border border-white/[0.08] bg-[#11151D] overflow-hidden lg:col-span-5">
+            <div className="border-b border-white/[0.08] px-4 py-3">
+              <h2 className="font-display text-sm font-semibold text-white">
+                Correlated Security Incidents ({tenantIncidents.length})
+              </h2>
+            </div>
+            {tenantIncidents.length === 0 ? (
+              <p className="p-6 text-xs text-slate-400">No correlated security incidents for this tenant.</p>
+            ) : (
+              <ul className="divide-y divide-white/[0.06]">
+                {tenantIncidents.map((inc) => {
+                  const isSel = activeIncident?.id === inc.id;
+                  return (
+                    <li key={inc.id} className={isSel ? 'bg-sky-500/10' : 'hover:bg-white/[0.03]'}>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setSelectedIncidentId(inc.id);
+                          setContainmentFeedback(null);
+                        }}
+                        className="w-full px-4 py-3.5 text-left"
+                      >
+                        <div className="flex items-center justify-between gap-2">
+                          <RiskLabel level={inc.severity} />
+                          <span className="font-mono text-[11px] uppercase text-sky-300">
+                            {inc.status}
+                          </span>
+                        </div>
+                        <p className="mt-1.5 text-xs font-semibold text-white">{inc.title}</p>
+                        <p className="mt-0.5 text-[11px] text-slate-400">
+                          {inc.agentName} · {inc.signalSummary}
+                        </p>
+                      </button>
+                    </li>
+                  );
+                })}
+              </ul>
+            )}
+          </div>
+
+          <div className="rounded-xl border border-white/[0.08] bg-[#11151D] p-5 lg:col-span-7 space-y-4">
+            {activeIncident ? (
+              <>
+                <div className="flex flex-wrap items-start justify-between gap-3">
+                  <div>
+                    <div className="flex items-center gap-2">
+                      <RiskLabel level={activeIncident.severity} />
+                      <span className="font-mono text-xs uppercase text-sky-300">
+                        {activeIncident.status}
+                      </span>
+                    </div>
+                    <h2 className="mt-2 font-display text-lg font-semibold text-white">
+                      {activeIncident.title}
+                    </h2>
+                    <p className="mt-1 text-xs text-slate-400">{activeIncident.signalSummary}</p>
+                  </div>
+                </div>
+
+                {containmentFeedback && (
+                  <div
+                    role={containmentFeedback.kind === 'error' ? 'alert' : 'status'}
+                    className={`rounded-lg border px-3.5 py-2.5 text-xs ${
+                      containmentFeedback.kind === 'error'
+                        ? 'border-rose-500/40 bg-rose-500/10 text-rose-300'
+                        : 'border-emerald-500/40 bg-emerald-500/10 text-emerald-300'
+                    }`}
+                  >
+                    {containmentFeedback.text}
+                  </div>
+                )}
+
+                <div className="border-t border-white/[0.08] pt-4 space-y-3">
+                  <div className="flex items-center justify-between">
+                    <p className="text-xs font-semibold text-white">
+                      8-Action Approval-Gated Containment Workbench
+                    </p>
+                    <span className="font-mono text-[11px] text-slate-400">
+                      Target: {activeIncident.agentName}
+                    </span>
+                  </div>
+
+                  <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+                    {containmentCatalog.map((item) => {
+                      const active = selectedContainmentAction === item.id;
+                      return (
+                        <button
+                          key={item.id}
+                          type="button"
+                          onClick={() => setSelectedContainmentAction(item.id)}
+                          className={`rounded-lg border p-3 text-left transition-colors ${
+                            active
+                              ? 'border-sky-400 bg-sky-500/10'
+                              : 'border-white/[0.08] bg-[#090B10] hover:border-white/20'
+                          }`}
+                        >
+                          <div className="flex items-center justify-between gap-2">
+                            <span className="text-xs font-semibold text-white">{item.label}</span>
+                            <span className="font-mono text-[10px] text-slate-400">
+                              {item.targetType}
+                            </span>
+                          </div>
+                          <p className="mt-1 text-[11px] text-slate-400">{item.description}</p>
+                        </button>
+                      );
+                    })}
+                  </div>
+
+                  {onContainIncident && (
+                    <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-white/[0.08] bg-[#090B10] p-3">
+                      <label className="inline-flex items-center gap-2 text-xs text-slate-300 cursor-pointer">
+                        <input
+                          type="checkbox"
+                          checked={containmentApproved}
+                          onChange={(e) => setContainmentApproved(e.target.checked)}
+                          className="rounded border-white/20 bg-[#11151D]"
+                        />
+                        <span>Explicit human approval confirmed (required for execution)</span>
+                      </label>
+
+                      <div className="flex items-center gap-2">
+                        <button
+                          type="button"
+                          disabled={containmentBusy}
+                          onClick={() => handleRunContainment(true)}
+                          className="rounded-lg border border-white/15 bg-[#11151D] px-3 py-1.5 text-xs font-medium text-slate-200 hover:text-white disabled:opacity-50"
+                        >
+                          Dry-run impact
+                        </button>
+                        <button
+                          type="button"
+                          disabled={containmentBusy}
+                          onClick={() => handleRunContainment(false)}
+                          className="rounded-lg bg-rose-500 px-3.5 py-1.5 text-xs font-semibold text-white hover:bg-rose-400 disabled:opacity-50"
+                        >
+                          {containmentBusy ? 'Executing...' : 'Execute containment'}
+                        </button>
+                      </div>
+                    </div>
+                  )}
+                </div>
+
+                {activeIncident.executedActions.length > 0 && (
+                  <div className="border-t border-white/[0.08] pt-4">
+                    <p className="text-xs font-semibold text-slate-300">
+                      Containment execution &amp; evidence log ({activeIncident.executedActions.length})
+                    </p>
+                    <ul className="mt-2 space-y-2">
+                      {activeIncident.executedActions.map((act, idx) => (
+                        <li
+                          key={`${act.executedAt}-${idx}`}
+                          className="rounded-lg border border-white/[0.06] bg-[#090B10] px-3 py-2 text-[11px]"
+                        >
+                          <div className="flex items-center justify-between gap-2">
+                            <span className="font-mono text-sky-300">
+                              {act.label} {act.dryRun ? '(dry-run)' : '(executed)'}
+                            </span>
+                            <span className="font-mono text-slate-500">
+                              by {act.executedBy} · ev={act.evidenceId}
+                            </span>
+                          </div>
+                          <p className="mt-0.5 text-slate-300">{act.summary}</p>
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
+              </>
+            ) : (
+              <p className="text-xs text-slate-400">Select an incident to inspect containment options.</p>
+            )}
+          </div>
+        </div>
+      ) : (
+        <div className="grid grid-cols-1 gap-6 lg:grid-cols-12">
         {/* Findings Table */}
         <div className="rounded-xl border border-white/[0.08] bg-[#11151D] overflow-hidden lg:col-span-6">
           {filtered.length === 0 ? (
@@ -776,6 +1043,7 @@ export const FindingsView: React.FC<FindingsViewProps> = ({
           )}
         </div>
       </div>
+      )}
     </div>
   );
 };

@@ -1,0 +1,8 @@
+"ID","Requirement","Priority"
+"FR-5.1","Discover data sources across cloud, SaaS, databases, and vector stores","P0"
+"FR-5.2","Discover data objects, files, records, and embeddings","P0"
+"FR-5.3","Classify data by sensitivity, regulation, and business impact","P0"
+"FR-5.4","Map agent-to-data access through identities and tools","P0"
+"FR-5.5","Discover RAG indexes, retrieval paths, and agent memory","P1"
+"FR-5.6","Detect external-transfer paths to models or SaaS","P0"
+"FR-5.7","Support metadata, schema, and sampled-content classification","P0"

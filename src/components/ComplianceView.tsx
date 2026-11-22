@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { CheckCircle2, Download, FileCheck2, ShieldAlert } from 'lucide-react';
 import type { ComplianceExportResponse } from '../App';
 import type {
+  ComplianceException,
   ComplianceFramework,
   ControlItem,
   EvidenceItem,
@@ -14,15 +15,28 @@ interface ComplianceViewProps {
   controls: ControlItem[];
   evidence: EvidenceItem[];
   evidenceRecords?: EvidenceRecord[];
+  complianceExceptions?: ComplianceException[];
   onExportAuditPack?: (opts: {
     framework: ComplianceFramework | 'all';
     fromDate?: string;
     toDate?: string;
   }) => Promise<ComplianceExportResponse | null>;
+  onExportComplianceCsv?: (framework: ComplianceFramework | 'all') => Promise<{
+    filename: string;
+    csvContent: string;
+    rowCount: number;
+  } | null>;
   onAttestControl?: (
     controlId: string,
     payload: { title?: string; summary: string; source?: string }
   ) => Promise<{ control: ControlItem; evidenceRecord: EvidenceRecord } | null>;
+  onCreateComplianceException?: (payload: {
+    controlId: string;
+    reason: string;
+    compensatingControl: string;
+    expiresInDays?: number;
+  }) => Promise<ComplianceException | null>;
+  onRevokeComplianceException?: (exceptionId: string) => Promise<void>;
 }
 
 const FRAMEWORKS: Array<'all' | ComplianceFramework> = [
@@ -39,19 +53,32 @@ export const ComplianceView: React.FC<ComplianceViewProps> = ({
   controls,
   evidence,
   evidenceRecords = [],
+  complianceExceptions = [],
   onExportAuditPack,
+  onExportComplianceCsv,
   onAttestControl,
+  onCreateComplianceException,
+  onRevokeComplianceException,
 }) => {
   const [frameworkFilter, setFrameworkFilter] = useState<'all' | ComplianceFramework>('all');
   const [fromDate, setFromDate] = useState<string>('');
   const [toDate, setToDate] = useState<string>('');
   const [exportBusy, setExportBusy] = useState(false);
+  const [csvNotice, setCsvNotice] = useState('');
   const [attestingControlId, setAttestingControlId] = useState<string | null>(null);
   const [attestSummary, setAttestSummary] = useState<string>('');
   const [attestSource, setAttestSource] = useState<string>('Compliance Attestation Review');
   const [attestBusy, setAttestBusy] = useState(false);
   const [attestError, setAttestError] = useState<string>('');
   const [attestNotice, setAttestNotice] = useState<string>('');
+
+  const [excControlId, setExcControlId] = useState<string>(controls[0]?.id ?? 'ctrl_soc2_cc6_2');
+  const [excReason, setExcReason] = useState('');
+  const [excCompensating, setExcCompensating] = useState('');
+  const [excDays, setExcDays] = useState(30);
+  const [excBusy, setExcBusy] = useState(false);
+  const [excError, setExcError] = useState('');
+
   const [exportSummary, setExportSummary] = useState<{
     packageId: string;
     controlsCount: number;
@@ -76,6 +103,55 @@ export const ComplianceView: React.FC<ComplianceViewProps> = ({
         );
 
   const stats = computeComplianceCoverage(visibleControls);
+
+  const handleCsvDownload = async () => {
+    if (!onExportComplianceCsv) return;
+    setExportBusy(true);
+    setCsvNotice('');
+    try {
+      const res = await onExportComplianceCsv(frameworkFilter);
+      if (res) {
+        const blob = new Blob([res.csvContent], { type: 'text/csv;charset=utf-8' });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = res.filename;
+        a.click();
+        URL.revokeObjectURL(url);
+        setCsvNotice(`Exported ${res.rowCount} compliance control rows to ${res.filename}.`);
+      }
+    } finally {
+      setExportBusy(false);
+    }
+  };
+
+  const handleCreateException = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!onCreateComplianceException) return;
+    if (!excReason.trim() || !excCompensating.trim()) {
+      setExcError('Reason and compensating control are required.');
+      return;
+    }
+    setExcBusy(true);
+    setExcError('');
+    try {
+      const created = await onCreateComplianceException({
+        controlId: excControlId || controls[0]?.id || 'ctrl_soc2_cc6_2',
+        reason: excReason.trim(),
+        compensatingControl: excCompensating.trim(),
+        expiresInDays: excDays,
+      });
+      if (created) {
+        setAttestNotice(`Recorded compliance exception ${created.id} for ${created.controlCode}.`);
+        setExcReason('');
+        setExcCompensating('');
+      }
+    } catch (err) {
+      setExcError((err as Error).message || 'Unable to record compliance exception.');
+    } finally {
+      setExcBusy(false);
+    }
+  };
 
   const handleAuditExport = async () => {
     setExportBusy(true);
@@ -223,16 +299,39 @@ export const ComplianceView: React.FC<ComplianceViewProps> = ({
           </p>
         </div>
 
-        <button
-          type="button"
-          disabled={exportBusy}
-          onClick={handleAuditExport}
-          className="inline-flex items-center gap-2 rounded-lg bg-sky-500 px-4 py-2 text-xs font-semibold text-slate-950 hover:bg-sky-400 disabled:opacity-50 whitespace-nowrap shrink-0"
-        >
-          <Download className="w-3.5 h-3.5" aria-hidden="true" />
-          <span>{exportBusy ? 'Generating pack...' : 'Export audit pack'}</span>
-        </button>
+        <div className="flex flex-wrap items-center gap-2.5">
+          {onExportComplianceCsv && (
+            <button
+              type="button"
+              disabled={exportBusy}
+              onClick={handleCsvDownload}
+              className="inline-flex items-center gap-2 rounded-lg border border-white/15 bg-[#090B10] px-3.5 py-2 text-xs font-medium text-slate-200 hover:border-sky-500/50 hover:text-white disabled:opacity-50 whitespace-nowrap shrink-0"
+            >
+              <Download className="w-3.5 h-3.5 text-sky-400" aria-hidden="true" />
+              <span>Export CSV</span>
+            </button>
+          )}
+          <button
+            type="button"
+            disabled={exportBusy}
+            onClick={handleAuditExport}
+            className="inline-flex items-center gap-2 rounded-lg bg-sky-500 px-4 py-2 text-xs font-semibold text-slate-950 hover:bg-sky-400 disabled:opacity-50 whitespace-nowrap shrink-0"
+          >
+            <Download className="w-3.5 h-3.5" aria-hidden="true" />
+            <span>{exportBusy ? 'Generating pack...' : 'Export audit pack'}</span>
+          </button>
+        </div>
       </div>
+
+      {csvNotice && (
+        <div
+          role="status"
+          className="flex items-center gap-2 rounded-lg border border-emerald-500/30 bg-emerald-500/10 px-4 py-2.5 text-xs text-emerald-300"
+        >
+          <CheckCircle2 className="w-4 h-4 shrink-0" aria-hidden="true" />
+          <span>{csvNotice}</span>
+        </div>
+      )}
 
       {exportSummary && (
         <div
@@ -527,6 +626,151 @@ export const ComplianceView: React.FC<ComplianceViewProps> = ({
           )}
         </div>
       </div>
+
+      {/* Compliance Risk Exceptions */}
+      {(onCreateComplianceException || complianceExceptions.length > 0) && (
+        <div className="rounded-xl border border-white/[0.08] bg-[#11151D] p-5 space-y-4">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <div>
+              <h2 className="font-display text-base font-semibold text-white">
+                Compliance Risk Exceptions ({complianceExceptions.filter((e) => e.status === 'active').length} active)
+              </h2>
+              <p className="text-xs text-slate-400">
+                Time-bounded control exceptions backed by compensating controls and immutable audit logs
+              </p>
+            </div>
+          </div>
+
+          {onCreateComplianceException && (
+            <form
+              onSubmit={handleCreateException}
+              className="grid grid-cols-1 gap-3 rounded-lg border border-white/[0.08] bg-[#090B10] p-4 md:grid-cols-12"
+            >
+              <div className="md:col-span-3">
+                <label htmlFor="cexc-control" className="block text-[11px] text-slate-400">
+                  Control
+                </label>
+                <select
+                  id="cexc-control"
+                  value={excControlId}
+                  onChange={(e) => setExcControlId(e.target.value)}
+                  className="mt-1 w-full rounded-lg border border-white/15 bg-[#11151D] px-2.5 py-1.5 text-xs text-white focus:border-sky-500 focus:outline-none"
+                >
+                  {controls.map((c) => (
+                    <option key={c.id} value={c.id}>
+                      {c.code} · {c.framework}
+                    </option>
+                  ))}
+                </select>
+              </div>
+              <div className="md:col-span-4">
+                <label htmlFor="cexc-reason" className="block text-[11px] text-slate-400">
+                  Business justification
+                </label>
+                <input
+                  id="cexc-reason"
+                  type="text"
+                  value={excReason}
+                  onChange={(e) => setExcReason(e.target.value)}
+                  placeholder="e.g. Legacy quarter-end batch window migration"
+                  className="mt-1 w-full rounded-lg border border-white/15 bg-[#11151D] px-2.5 py-1.5 text-xs text-white focus:border-sky-500 focus:outline-none"
+                />
+              </div>
+              <div className="md:col-span-3">
+                <label htmlFor="cexc-comp" className="block text-[11px] text-slate-400">
+                  Compensating control
+                </label>
+                <input
+                  id="cexc-comp"
+                  type="text"
+                  value={excCompensating}
+                  onChange={(e) => setExcCompensating(e.target.value)}
+                  placeholder="e.g. Tokenized PII proxy + daily audit review"
+                  className="mt-1 w-full rounded-lg border border-white/15 bg-[#11151D] px-2.5 py-1.5 text-xs text-white focus:border-sky-500 focus:outline-none"
+                />
+              </div>
+              <div className="md:col-span-2 flex items-end gap-2">
+                <div className="w-16">
+                  <label htmlFor="cexc-days" className="block text-[11px] text-slate-400">
+                    Days
+                  </label>
+                  <input
+                    id="cexc-days"
+                    type="number"
+                    min={1}
+                    max={180}
+                    value={excDays}
+                    onChange={(e) => setExcDays(Number(e.target.value) || 30)}
+                    className="mt-1 w-full rounded-lg border border-white/15 bg-[#11151D] px-2 py-1.5 font-mono text-xs text-white focus:border-sky-500 focus:outline-none"
+                  />
+                </div>
+                <button
+                  type="submit"
+                  disabled={excBusy}
+                  className="flex-1 rounded-lg bg-sky-500 px-3 py-1.5 text-xs font-semibold text-slate-950 hover:bg-sky-400 disabled:opacity-50 whitespace-nowrap"
+                >
+                  {excBusy ? 'Saving...' : 'Grant'}
+                </button>
+              </div>
+              {excError && (
+                <p role="alert" className="md:col-span-12 text-xs text-rose-400">
+                  {excError}
+                </p>
+              )}
+            </form>
+          )}
+
+          {complianceExceptions.length > 0 && (
+            <div className="overflow-x-auto">
+              <table className="w-full text-left text-xs">
+                <thead>
+                  <tr className="border-b border-white/[0.08] text-slate-400">
+                    <th className="py-2 pr-3 font-medium">Control</th>
+                    <th className="py-2 pr-3 font-medium">Justification &amp; Compensating Control</th>
+                    <th className="py-2 pr-3 font-medium">Expires</th>
+                    <th className="py-2 pr-3 font-medium">Status</th>
+                    <th className="py-2 text-right font-medium">Action</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-white/[0.06]">
+                  {complianceExceptions.map((exc) => (
+                    <tr key={exc.id}>
+                      <td className="py-2.5 pr-3 font-mono text-sky-300 whitespace-nowrap">
+                        {exc.controlCode} ({exc.framework})
+                      </td>
+                      <td className="py-2.5 pr-3 text-slate-300">
+                        <p>{exc.reason}</p>
+                        <p className="text-[11px] text-slate-400">
+                          Compensating: {exc.compensatingControl} · By {exc.approvedBy}
+                        </p>
+                      </td>
+                      <td className="py-2.5 pr-3 font-mono text-[11px] text-slate-400 tabular-nums whitespace-nowrap">
+                        {exc.expiresAt.slice(0, 10)}
+                      </td>
+                      <td className="py-2.5 pr-3 font-mono text-[11px] whitespace-nowrap">
+                        <span className={exc.status === 'active' ? 'text-amber-300' : 'text-slate-500'}>
+                          {exc.status}
+                        </span>
+                      </td>
+                      <td className="py-2.5 text-right whitespace-nowrap">
+                        {exc.status === 'active' && onRevokeComplianceException && (
+                          <button
+                            type="button"
+                            onClick={() => onRevokeComplianceException(exc.id)}
+                            className="rounded border border-rose-500/40 bg-rose-500/10 px-2.5 py-1 text-[11px] text-rose-300 hover:bg-rose-500/20"
+                          >
+                            Revoke
+                          </button>
+                        )}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </div>
+      )}
     </div>
   );
 };

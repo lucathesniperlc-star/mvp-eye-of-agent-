@@ -22,7 +22,7 @@ export interface AgentFilterCriteria {
 
 export interface ExposurePathNode {
   id: string;
-  stage: 'agent' | 'identity' | 'mcp' | 'data';
+  stage: 'agent' | 'identity' | 'mcp' | 'data' | 'egress';
   label: string;
   sublabel: string;
   risk: RiskLevel;
@@ -34,6 +34,7 @@ export interface ExposurePathChain {
   riskScore: number;
   riskLevel: RiskLevel;
   nodes: ExposurePathNode[];
+  externalDestination?: ExposurePathNode;
   permissions: string[];
   tools: string[];
 }

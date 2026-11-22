@@ -20,10 +20,14 @@ import type {
   AgentStatus,
   AgentType,
   ComplianceFramework,
+  ContainmentActionId,
   EnforcementAction,
+  McpApprovalStatus,
+  ModelApprovalStatus,
   PlaybookId,
   RiskFactorInputs,
   RolloutStage,
+  VerticalPackId,
 } from '../src/types/security.ts';
 
 export function createApiRouter() {
@@ -668,6 +672,135 @@ export function createApiRouter() {
     }
   );
 
+  router.get(
+    '/vertical-packs',
+    requireAuth,
+    requirePermission('policies:read'),
+    (req: AuthenticatedRequest, res) => {
+      const auth = req.auth!;
+      res.json(store.getVerticalPacks(auth.tenantId));
+    }
+  );
+
+  router.post(
+    '/vertical-packs/:packId/activate',
+    requireAuth,
+    requirePermission('policies:manage'),
+    (req: AuthenticatedRequest, res) => {
+      const auth = req.auth!;
+      const install = req.body?.install !== false;
+      try {
+        const result = store.toggleVerticalPack(
+          auth.tenantId,
+          req.params.packId as VerticalPackId,
+          install,
+          { id: auth.user.id, email: auth.user.email, role: auth.role }
+        );
+        res.json(result);
+      } catch (err) {
+        res.status(404).json({ error: (err as Error).message });
+      }
+    }
+  );
+
+  router.post(
+    '/registry/models/:modelId/approval',
+    requireAuth,
+    requirePermission('policies:manage'),
+    (req: AuthenticatedRequest, res) => {
+      const auth = req.auth!;
+      const status = req.body?.approvalStatus as ModelApprovalStatus | undefined;
+      if (status !== 'approved' && status !== 'unapproved' && status !== 'pending_review' && status !== 'restricted') {
+        return res.status(400).json({ error: 'Invalid model approval status' });
+      }
+      try {
+        const model = store.updateModelApproval(auth.tenantId, req.params.modelId, status, {
+          id: auth.user.id,
+          email: auth.user.email,
+          role: auth.role,
+        });
+        res.json({ model });
+      } catch (err) {
+        res.status(404).json({ error: (err as Error).message });
+      }
+    }
+  );
+
+  router.post(
+    '/registry/mcp/:mcpId/approval',
+    requireAuth,
+    requirePermission('policies:manage'),
+    (req: AuthenticatedRequest, res) => {
+      const auth = req.auth!;
+      const status = req.body?.approvalStatus as McpApprovalStatus | undefined;
+      if (status !== 'approved' && status !== 'unapproved' && status !== 'disabled') {
+        return res.status(400).json({ error: 'Invalid MCP approval status' });
+      }
+      try {
+        const mcpServer = store.updateMcpApproval(auth.tenantId, req.params.mcpId, status, {
+          id: auth.user.id,
+          email: auth.user.email,
+          role: auth.role,
+        });
+        res.json({ mcpServer });
+      } catch (err) {
+        res.status(404).json({ error: (err as Error).message });
+      }
+    }
+  );
+
+  router.post(
+    '/policy/exceptions',
+    requireAuth,
+    requirePermission('policies:manage'),
+    (req: AuthenticatedRequest, res) => {
+      const auth = req.auth!;
+      const body = (req.body ?? {}) as {
+        policyId?: string;
+        agentId?: string;
+        justification?: string;
+        expiresInDays?: number;
+      };
+      if (!body.policyId || !body.agentId) {
+        return res.status(400).json({ error: 'policyId and agentId are required' });
+      }
+      try {
+        const exception = store.createPolicyException(
+          auth.tenantId,
+          {
+            policyId: body.policyId,
+            agentId: body.agentId,
+            justification: body.justification ?? '',
+            expiresInDays: body.expiresInDays,
+          },
+          { id: auth.user.id, email: auth.user.email, role: auth.role }
+        );
+        res.status(201).json({ exception });
+      } catch (err) {
+        res.status(400).json({ error: (err as Error).message });
+      }
+    }
+  );
+
+  router.post(
+    '/policy/exceptions/:exceptionId/revoke',
+    requireAuth,
+    requirePermission('policies:manage'),
+    (req: AuthenticatedRequest, res) => {
+      const auth = req.auth!;
+      try {
+        const exception = store.revokePolicyException(auth.tenantId, req.params.exceptionId, {
+          id: auth.user.id,
+          email: auth.user.email,
+          role: auth.role,
+        });
+        res.json({ exception });
+      } catch (err) {
+        res.status(404).json({ error: (err as Error).message });
+      }
+    }
+  );
+
   // Agent Registration & Governance Updates (Owner assignment, Quarantine/Restrict, Risk Recalculation)
   router.post(
     '/agents',
@@ -727,6 +860,45 @@ export function createApiRouter() {
           auth.tenantId,
           req.params.agentId,
           body,
+          { id: auth.user.id, email: auth.user.email, role: auth.role }
+        );
+        res.json({ agent });
+      } catch (err) {
+        res.status(404).json({ error: (err as Error).message });
+      }
+    }
+  );
+
+  router.post(
+    '/agents/:agentId/lifecycle',
+    requireAuth,
+    requirePermission('findings:manage'),
+    (req: AuthenticatedRequest, res) => {
+      const auth = req.auth!;
+      const body = (req.body ?? {}) as {
+        action?: 'verify' | 'sanction' | 'unsanction' | 'retire';
+        owner?: string;
+        ownerTeam?: string;
+        reason?: string;
+      };
+      if (
+        body.action !== 'verify' &&
+        body.action !== 'sanction' &&
+        body.action !== 'unsanction' &&
+        body.action !== 'retire'
+      ) {
+        return res.status(400).json({ error: 'Invalid lifecycle action' });
+      }
+      try {
+        const agent = store.reviewAgentLifecycle(
+          auth.tenantId,
+          req.params.agentId,
+          {
+            action: body.action,
+            owner: body.owner,
+            ownerTeam: body.ownerTeam,
+            reason: body.reason,
+          },
           { id: auth.user.id, email: auth.user.email, role: auth.role }
         );
         res.json({ agent });
@@ -1099,6 +1271,71 @@ export function createApiRouter() {
   );
 
   router.post(
+    '/enterprise/gateway-config',
+    requireAuth,
+    requirePermission('policies:manage'),
+    (req: AuthenticatedRequest, res) => {
+      const auth = req.auth!;
+      const body = (req.body ?? {}) as {
+        failoverMode?: 'fail_open' | 'fail_closed';
+        responseInspectionEnabled?: boolean;
+        promptInjectionGuardEnabled?: boolean;
+        timeoutMs?: number;
+      };
+      const gatewayRuntimeConfig = store.updateGatewayRuntimeConfig(
+        auth.tenantId,
+        body,
+        { id: auth.user.id, email: auth.user.email, role: auth.role }
+      );
+      res.json({ gatewayRuntimeConfig });
+    }
+  );
+
+  router.get(
+    '/incidents',
+    requireAuth,
+    requirePermission('findings:read'),
+    (req: AuthenticatedRequest, res) => {
+      const auth = req.auth!;
+      res.json({ incidents: store.getIncidents(auth.tenantId) });
+    }
+  );
+
+  router.post(
+    '/incidents/:incidentId/contain',
+    requireAuth,
+    requirePermission('findings:manage'),
+    (req: AuthenticatedRequest, res) => {
+      const auth = req.auth!;
+      const body = (req.body ?? {}) as {
+        action?: ContainmentActionId;
+        approve?: boolean;
+        dryRun?: boolean;
+      };
+      if (!body.action) {
+        return res.status(400).json({ error: 'Containment action is required' });
+      }
+      try {
+        const result = store.containIncident(
+          auth.tenantId,
+          req.params.incidentId,
+          {
+            action: body.action,
+            approve: Boolean(body.approve),
+            dryRun: Boolean(body.dryRun),
+          },
+          { id: auth.user.id, email: auth.user.email, role: auth.role }
+        );
+        res.json(result);
+      } catch (err) {
+        const msg = (err as Error).message;
+        const status = msg.includes('Approval required') ? 409 : 404;
+        res.status(status).json({ error: msg });
+      }
+    }
+  );
+
+  router.post(
     '/enterprise/pep/evaluate',
     requireAuth,
     requirePermission('policies:read'),
@@ -1111,10 +1348,12 @@ export function createApiRouter() {
         tool?: string;
         mcpServer?: string;
         promptText?: string;
+        responseText?: string;
         targetResource?: string;
         requestedActionOverride?: EnforcementAction;
         mfaVerified?: boolean;
         replayNonce?: string;
+        simulatePdpUnavailable?: boolean;
       };
       if (!body.agentId || !body.tool) {
         return res.status(400).json({ error: 'agentId and tool are required' });
@@ -1129,10 +1368,12 @@ export function createApiRouter() {
             tool: body.tool,
             mcpServer: body.mcpServer,
             promptText: body.promptText,
+            responseText: body.responseText,
             targetResource: body.targetResource,
             requestedActionOverride: body.requestedActionOverride,
             mfaVerified: body.mfaVerified,
             replayNonce: body.replayNonce,
+            simulatePdpUnavailable: Boolean(body.simulatePdpUnavailable),
           },
           { id: auth.user.id, email: auth.user.email, role: auth.role }
         );
@@ -1449,6 +1690,76 @@ export function createApiRouter() {
       } catch (err) {
         res.status(400).json({ error: (err as Error).message });
       }
+    }
+  );
+
+  router.post(
+    '/compliance/exceptions',
+    requireAuth,
+    requirePermission('compliance:export'),
+    (req: AuthenticatedRequest, res) => {
+      const auth = req.auth!;
+      const body = (req.body ?? {}) as {
+        controlId?: string;
+        reason?: string;
+        compensatingControl?: string;
+        expiresInDays?: number;
+      };
+      if (!body.controlId) {
+        return res.status(400).json({ error: 'controlId is required' });
+      }
+      try {
+        const exception = store.createComplianceException(
+          auth.tenantId,
+          {
+            controlId: body.controlId,
+            reason: body.reason ?? '',
+            compensatingControl: body.compensatingControl ?? '',
+            expiresInDays: body.expiresInDays,
+          },
+          { id: auth.user.id, email: auth.user.email, role: auth.role }
+        );
+        res.status(201).json({ exception });
+      } catch (err) {
+        res.status(400).json({ error: (err as Error).message });
+      }
+    }
+  );
+
+  router.post(
+    '/compliance/exceptions/:exceptionId/revoke',
+    requireAuth,
+    requirePermission('compliance:export'),
+    (req: AuthenticatedRequest, res) => {
+      const auth = req.auth!;
+      try {
+        const exception = store.revokeComplianceException(
+          auth.tenantId,
+          req.params.exceptionId,
+          { id: auth.user.id, email: auth.user.email, role: auth.role }
+        );
+        res.json({ exception });
+      } catch (err) {
+        res.status(404).json({ error: (err as Error).message });
+      }
+    }
+  );
+
+  router.post(
+    '/compliance/export-csv',
+    requireAuth,
+    requirePermission('compliance:export'),
+    (req: AuthenticatedRequest, res) => {
+      const auth = req.auth!;
+      const framework = (
+        typeof req.body?.framework === 'string' ? req.body.framework : 'all'
+      ) as ComplianceFramework | 'all';
+      const result = store.exportComplianceCsv(
+        auth.tenantId,
+        { framework },
+        { id: auth.user.id, email: auth.user.email, role: auth.role }
+      );
+      res.json(result);
     }
   );
 

@@ -14,19 +14,28 @@ import {
 import type { GatewayInspectResponse, PepEvaluateResponse } from '../App';
 import type {
   Agent,
+  AiProviderAdapterMeta,
   EnforcementAction,
   GatewayEvent,
   GatewayPolicyDefinition,
+  GatewayRuntimeConfig,
   KillSwitchState,
+  McpApprovalStatus,
+  McpServer,
+  ModelApprovalStatus,
+  ModelAsset,
   PlaybookDefinition,
   PlaybookExecutionRecord,
   PlaybookId,
   PolicyAction,
+  PolicyException,
   PolicyMode,
   PolicyRule,
   PolicySimulationEvent,
   RetentionPolicyConfig,
   RolloutStage,
+  VerticalPackId,
+  VerticalPolicyPack,
 } from '../types/security';
 import { summarizePolicySimulation } from '../utils/riskEngine';
 import { GatewayDecisionLabel, PolicyActionLabel } from './RiskIndicator';
@@ -38,6 +47,8 @@ interface PolicyViewProps {
   onToggleRule: (ruleId: string) => void;
   simulationEvents: PolicySimulationEvent[];
   agents?: Agent[];
+  models?: ModelAsset[];
+  mcpServers?: McpServer[];
   gatewayPolicies?: GatewayPolicyDefinition[];
   gatewayEvents?: GatewayEvent[];
   retentionConfig?: RetentionPolicyConfig;
@@ -45,6 +56,11 @@ interface PolicyViewProps {
   killSwitch?: KillSwitchState;
   playbooks?: PlaybookDefinition[];
   playbookExecutions?: PlaybookExecutionRecord[];
+  activeVerticalPacks?: VerticalPackId[];
+  verticalPacksCatalog?: VerticalPolicyPack[];
+  providerAdapters?: AiProviderAdapterMeta[];
+  policyExceptions?: PolicyException[];
+  gatewayRuntimeConfig?: GatewayRuntimeConfig;
   onInspectGateway?: (payload: {
     agentId: string;
     provider?: string;
@@ -62,8 +78,10 @@ interface PolicyViewProps {
     tool: string;
     mcpServer?: string;
     promptText?: string;
+    responseText?: string;
     targetResource?: string;
     requestedActionOverride?: EnforcementAction;
+    simulatePdpUnavailable?: boolean;
   }) => Promise<PepEvaluateResponse | null>;
   onChangeRolloutStage?: (stage: RolloutStage) => Promise<void>;
   onToggleKillSwitch?: (paused: boolean, reason?: string) => Promise<void>;
@@ -84,6 +102,21 @@ interface PolicyViewProps {
     tools: string[];
     dataClassification: string[];
     decision: EnforcementAction;
+  }) => Promise<void>;
+  onActivateVerticalPack?: (packId: VerticalPackId, install: boolean) => Promise<void>;
+  onUpdateModelApproval?: (modelId: string, approvalStatus: ModelApprovalStatus) => Promise<void>;
+  onUpdateMcpApproval?: (mcpId: string, approvalStatus: McpApprovalStatus) => Promise<void>;
+  onCreatePolicyException?: (payload: {
+    policyId: string;
+    agentId: string;
+    justification: string;
+    expiresInDays?: number;
+  }) => Promise<void>;
+  onRevokePolicyException?: (exceptionId: string) => Promise<void>;
+  onUpdateGatewayConfig?: (updates: {
+    failoverMode?: 'fail_open' | 'fail_closed';
+    responseInspectionEnabled?: boolean;
+    promptInjectionGuardEnabled?: boolean;
   }) => Promise<void>;
 }
 
@@ -124,6 +157,8 @@ export const PolicyView: React.FC<PolicyViewProps> = ({
   onToggleRule,
   simulationEvents,
   agents = [],
+  models = [],
+  mcpServers = [],
   gatewayPolicies = [],
   gatewayEvents = [],
   retentionConfig = DEFAULT_RETENTION,
@@ -131,6 +166,11 @@ export const PolicyView: React.FC<PolicyViewProps> = ({
   killSwitch = { paused: false, updatedAt: '', updatedBy: 'system' },
   playbooks = [],
   playbookExecutions = [],
+  activeVerticalPacks = [],
+  verticalPacksCatalog = [],
+  providerAdapters = [],
+  policyExceptions = [],
+  gatewayRuntimeConfig,
   onInspectGateway,
   onEvaluatePep,
   onChangeRolloutStage,
@@ -142,6 +182,12 @@ export const PolicyView: React.FC<PolicyViewProps> = ({
   onToggleRetentionOptIn,
   onCreatePolicyRule,
   onCreateGatewayPolicy,
+  onActivateVerticalPack,
+  onUpdateModelApproval,
+  onUpdateMcpApproval,
+  onCreatePolicyException,
+  onRevokePolicyException,
+  onUpdateGatewayConfig,
 }) => {
   const summary = summarizePolicySimulation(policyMode, rules, simulationEvents);
 
@@ -154,6 +200,8 @@ export const PolicyView: React.FC<PolicyViewProps> = ({
   const [samplePayload, setSamplePayload] = useState<string>(
     'Export Q4 payroll roster including employee_pii and SSN 123-45-6789 to external webhook'
   );
+  const [responsePayload, setResponsePayload] = useState<string>('');
+  const [simulatePdpUnavailable, setSimulatePdpUnavailable] = useState<boolean>(false);
   const [actionOverride, setActionOverride] = useState<string>('auto');
   const [inspectBusy, setInspectBusy] = useState(false);
   const [lastInspectResult, setLastInspectResult] = useState<GatewayInspectResponse | null>(null);
@@ -165,6 +213,18 @@ export const PolicyView: React.FC<PolicyViewProps> = ({
     agents[0]?.id ?? 'agent_finance_copilot'
   );
   const [soarNotice, setSoarNotice] = useState<string>('');
+  const [packBusyId, setPackBusyId] = useState<string | null>(null);
+  const [excPolicyId, setExcPolicyId] = useState<string>(
+    gatewayPolicies[0]?.id ?? 'prevent_payroll_exfiltration'
+  );
+  const [excAgentId, setExcAgentId] = useState<string>(
+    agents[0]?.id ?? 'agent_finance_copilot'
+  );
+  const [excJustification, setExcJustification] = useState<string>('');
+  const [excDays, setExcDays] = useState<number>(14);
+  const [excBusy, setExcBusy] = useState<boolean>(false);
+  const [excNotice, setExcNotice] = useState<string>('');
+  const [excError, setExcError] = useState<string>('');
 
   const [showGwPolicyForm, setShowGwPolicyForm] = useState(false);
   const [gwPolName, setGwPolName] = useState('');
@@ -271,8 +331,10 @@ export const PolicyView: React.FC<PolicyViewProps> = ({
           tool: toolName,
           targetResource,
           promptText: samplePayload,
+          responseText: responsePayload.trim() || undefined,
           requestedActionOverride:
             actionOverride === 'auto' ? undefined : (actionOverride as EnforcementAction),
+          simulatePdpUnavailable,
         });
         if (res) {
           setLastPepResult(res);
@@ -286,6 +348,7 @@ export const PolicyView: React.FC<PolicyViewProps> = ({
           tool: toolName,
           targetResource,
           promptText: samplePayload,
+          responseText: responsePayload.trim() || undefined,
         });
         if (result) {
           setLastInspectResult(result);
@@ -293,6 +356,32 @@ export const PolicyView: React.FC<PolicyViewProps> = ({
       }
     } finally {
       setInspectBusy(false);
+    }
+  };
+
+  const handleCreateExceptionSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!onCreatePolicyException) return;
+    if (!excJustification.trim()) {
+      setExcError('Exception justification is required.');
+      return;
+    }
+    setExcBusy(true);
+    setExcError('');
+    setExcNotice('');
+    try {
+      await onCreatePolicyException({
+        policyId: excPolicyId,
+        agentId: excAgentId,
+        justification: excJustification.trim(),
+        expiresInDays: excDays,
+      });
+      setExcNotice('Time-bound policy exception granted and audit logged.');
+      setExcJustification('');
+    } catch (err) {
+      setExcError((err as Error).message || 'Unable to grant policy exception.');
+    } finally {
+      setExcBusy(false);
     }
   };
 
@@ -609,7 +698,7 @@ export const PolicyView: React.FC<PolicyViewProps> = ({
               </select>
             </div>
 
-            <div className="md:col-span-9">
+            <div className="md:col-span-6">
               <label htmlFor="gw-payload" className="block text-[11px] text-slate-400">
                 Transient prompt / tool arguments (evaluated in memory, never stored raw)
               </label>
@@ -618,6 +707,20 @@ export const PolicyView: React.FC<PolicyViewProps> = ({
                 type="text"
                 value={samplePayload}
                 onChange={(e) => setSamplePayload(e.target.value)}
+                className="mt-1 w-full rounded-lg border border-white/15 bg-[#090B10] px-3 py-2 font-mono text-xs text-white focus:border-sky-500 focus:outline-none"
+              />
+            </div>
+
+            <div className="md:col-span-3">
+              <label htmlFor="gw-response-payload" className="block text-[11px] text-slate-400">
+                Model response text (response inspection)
+              </label>
+              <input
+                id="gw-response-payload"
+                type="text"
+                value={responsePayload}
+                onChange={(e) => setResponsePayload(e.target.value)}
+                placeholder="Optional response PII / secret check..."
                 className="mt-1 w-full rounded-lg border border-white/15 bg-[#090B10] px-3 py-2 font-mono text-xs text-white focus:border-sky-500 focus:outline-none"
               />
             </div>
@@ -631,6 +734,59 @@ export const PolicyView: React.FC<PolicyViewProps> = ({
                 <Play className="w-3.5 h-3.5" aria-hidden="true" />
                 <span>{inspectBusy ? 'Evaluating...' : 'Evaluate via PEP → PDP'}</span>
               </button>
+            </div>
+
+            <div className="md:col-span-12 flex flex-wrap items-center justify-between gap-3 rounded-lg border border-white/[0.06] bg-[#090B10] px-3.5 py-2.5 text-xs">
+              <label className="inline-flex items-center gap-2 text-slate-300 cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={simulatePdpUnavailable}
+                  onChange={(e) => setSimulatePdpUnavailable(e.target.checked)}
+                  className="rounded border-white/20 bg-[#11151D]"
+                />
+                <span>Simulate PDP unavailable (test failover behavior)</span>
+              </label>
+
+              {gatewayRuntimeConfig && onUpdateGatewayConfig && (
+                <div className="flex flex-wrap items-center gap-4">
+                  <div className="flex items-center gap-2">
+                    <span className="text-[11px] text-slate-400">Failover mode:</span>
+                    <button
+                      type="button"
+                      onClick={() => onUpdateGatewayConfig({ failoverMode: 'fail_closed' })}
+                      className={`rounded px-2 py-0.5 font-mono text-[11px] ${
+                        gatewayRuntimeConfig.failoverMode === 'fail_closed'
+                          ? 'bg-rose-500/20 text-rose-300 border border-rose-500/40'
+                          : 'border border-white/10 text-slate-400 hover:text-white'
+                      }`}
+                    >
+                      fail_closed
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => onUpdateGatewayConfig({ failoverMode: 'fail_open' })}
+                      className={`rounded px-2 py-0.5 font-mono text-[11px] ${
+                        gatewayRuntimeConfig.failoverMode === 'fail_open'
+                          ? 'bg-amber-500/20 text-amber-300 border border-amber-500/40'
+                          : 'border border-white/10 text-slate-400 hover:text-white'
+                      }`}
+                    >
+                      fail_open
+                    </button>
+                  </div>
+                  <label className="inline-flex items-center gap-1.5 text-[11px] text-slate-300 cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={gatewayRuntimeConfig.responseInspectionEnabled}
+                      onChange={(e) =>
+                        onUpdateGatewayConfig({ responseInspectionEnabled: e.target.checked })
+                      }
+                      className="rounded border-white/20 bg-[#11151D]"
+                    />
+                    <span>Response inspection</span>
+                  </label>
+                </div>
+              )}
             </div>
           </form>
 
@@ -1333,6 +1489,373 @@ export const PolicyView: React.FC<PolicyViewProps> = ({
               ))}
         </div>
       </div>
+
+      {/* Industry Vertical Policy Packs (10) */}
+      {verticalPacksCatalog.length > 0 && (
+        <div className="rounded-xl border border-white/[0.08] bg-[#11151D] p-5 space-y-4">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <div>
+              <h2 className="font-display text-base font-semibold text-white">
+                Industry Vertical Policy Packs ({activeVerticalPacks.length} active / {verticalPacksCatalog.length})
+              </h2>
+              <p className="text-xs text-slate-400">
+                Install sector-specific governance rules, YAML gateway templates, and compliance framework baselines
+              </p>
+            </div>
+          </div>
+
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-5">
+            {verticalPacksCatalog.map((pack) => {
+              const isInstalled = activeVerticalPacks.includes(pack.id);
+              return (
+                <div
+                  key={pack.id}
+                  className={`rounded-lg border p-3.5 flex flex-col justify-between gap-3 ${
+                    isInstalled
+                      ? 'border-emerald-500/40 bg-emerald-500/5'
+                      : 'border-white/[0.08] bg-[#090B10]'
+                  }`}
+                >
+                  <div>
+                    <div className="flex items-center justify-between gap-2">
+                      <p className="text-xs font-semibold text-white">{pack.name}</p>
+                      <span
+                        className={`font-mono text-[10px] uppercase ${
+                          isInstalled ? 'text-emerald-400' : 'text-slate-500'
+                        }`}
+                      >
+                        {isInstalled ? 'active' : 'available'}
+                      </span>
+                    </div>
+                    <p className="mt-1 text-[11px] text-slate-400 line-clamp-2">{pack.summary}</p>
+                    <p className="mt-1.5 font-mono text-[10px] text-sky-300">
+                      {pack.frameworks.join(' · ')}
+                    </p>
+                  </div>
+
+                  {onActivateVerticalPack && (
+                    <button
+                      type="button"
+                      disabled={packBusyId === pack.id}
+                      onClick={async () => {
+                        setPackBusyId(pack.id);
+                        try {
+                          await onActivateVerticalPack(pack.id, !isInstalled);
+                        } finally {
+                          setPackBusyId(null);
+                        }
+                      }}
+                      className={`w-full rounded-md border px-2.5 py-1.5 text-[11px] font-semibold transition-colors ${
+                        isInstalled
+                          ? 'border-rose-500/40 bg-rose-500/10 text-rose-300 hover:bg-rose-500/20'
+                          : 'border-sky-500/40 bg-sky-500/15 text-sky-300 hover:bg-sky-500/25'
+                      }`}
+                    >
+                      {packBusyId === pack.id
+                        ? 'Updating...'
+                        : isInstalled
+                          ? 'Deactivate pack'
+                          : 'Install pack'}
+                    </button>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
+
+      {/* 11 AI Provider Adapters & Approved Model / MCP Registry */}
+      {(providerAdapters.length > 0 || models.length > 0 || mcpServers.length > 0) && (
+        <div className="grid grid-cols-1 gap-6 lg:grid-cols-12">
+          <div className="rounded-xl border border-white/[0.08] bg-[#11151D] p-5 space-y-3 lg:col-span-5">
+            <h2 className="font-display text-base font-semibold text-white">
+              AI Provider Adapters ({providerAdapters.length})
+            </h2>
+            <p className="text-xs text-slate-400">
+              Unified PEP gateway adapters across cloud foundation models &amp; self-hosted endpoints
+            </p>
+            <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+              {providerAdapters.map((ad) => (
+                <div
+                  key={ad.id}
+                  className="rounded-lg border border-white/[0.06] bg-[#090B10] px-3 py-2"
+                >
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="text-xs font-semibold text-white">{ad.name}</span>
+                    <span className="font-mono text-[10px] text-emerald-400">{ad.priority}</span>
+                  </div>
+                  <p className="mt-0.5 font-mono text-[10px] text-sky-300">{ad.protocol}</p>
+                  <p className="mt-0.5 text-[10px] text-slate-400">{ad.integrationCapabilities}</p>
+                </div>
+              ))}
+            </div>
+          </div>
+
+          <div className="rounded-xl border border-white/[0.08] bg-[#11151D] p-5 space-y-4 lg:col-span-7">
+            <h2 className="font-display text-base font-semibold text-white">
+              Approved Model &amp; MCP Registry
+            </h2>
+            <div className="space-y-2">
+              <p className="text-[11px] font-semibold uppercase tracking-wider text-slate-400">
+                Foundation Models ({models.length})
+              </p>
+              <div className="divide-y divide-white/[0.06] rounded-lg border border-white/[0.08] bg-[#090B10]">
+                {models.map((m) => (
+                  <div
+                    key={m.id}
+                    className="px-3 py-2.5 flex flex-wrap items-center justify-between gap-2 text-xs"
+                  >
+                    <div>
+                      <span className="font-medium text-white">{m.name}</span>{' '}
+                      <span className="font-mono text-[11px] text-slate-400">({m.provider})</span>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <span
+                        className={`font-mono text-[11px] ${
+                          m.approvalStatus === 'approved'
+                            ? 'text-emerald-400'
+                            : m.approvalStatus === 'restricted'
+                              ? 'text-rose-400'
+                              : 'text-amber-300'
+                        }`}
+                      >
+                        {m.approvalStatus ?? 'approved'}
+                      </span>
+                      {onUpdateModelApproval && (
+                        <>
+                          <button
+                            type="button"
+                            onClick={() => onUpdateModelApproval(m.id, 'approved')}
+                            className="rounded border border-emerald-500/30 bg-emerald-500/10 px-2 py-0.5 text-[10px] text-emerald-300 hover:bg-emerald-500/20"
+                          >
+                            Approve
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => onUpdateModelApproval(m.id, 'unapproved')}
+                            className="rounded border border-rose-500/30 bg-rose-500/10 px-2 py-0.5 text-[10px] text-rose-300 hover:bg-rose-500/20"
+                          >
+                            Block
+                          </button>
+                        </>
+                      )}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            <div className="space-y-2">
+              <p className="text-[11px] font-semibold uppercase tracking-wider text-slate-400">
+                MCP Servers ({mcpServers.length})
+              </p>
+              <div className="divide-y divide-white/[0.06] rounded-lg border border-white/[0.08] bg-[#090B10]">
+                {mcpServers.map((mcp) => (
+                  <div
+                    key={mcp.id}
+                    className="px-3 py-2.5 flex flex-wrap items-center justify-between gap-2 text-xs"
+                  >
+                    <div>
+                      <span className="font-mono font-medium text-white">{mcp.name}</span>{' '}
+                      <span className="text-[11px] text-slate-400">({mcp.transport})</span>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <span
+                        className={`font-mono text-[11px] ${
+                          mcp.approvalStatus === 'approved'
+                            ? 'text-emerald-400'
+                            : mcp.approvalStatus === 'disabled'
+                              ? 'text-rose-400'
+                              : 'text-amber-300'
+                        }`}
+                      >
+                        {mcp.approvalStatus ?? 'approved'}
+                      </span>
+                      {onUpdateMcpApproval && (
+                        <>
+                          <button
+                            type="button"
+                            onClick={() => onUpdateMcpApproval(mcp.id, 'approved')}
+                            className="rounded border border-emerald-500/30 bg-emerald-500/10 px-2 py-0.5 text-[10px] text-emerald-300 hover:bg-emerald-500/20"
+                          >
+                            Approve
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => onUpdateMcpApproval(mcp.id, 'disabled')}
+                            className="rounded border border-rose-500/30 bg-rose-500/10 px-2 py-0.5 text-[10px] text-rose-300 hover:bg-rose-500/20"
+                          >
+                            Disable
+                          </button>
+                        </>
+                      )}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Time-Bound Policy Exceptions */}
+      {(onCreatePolicyException || policyExceptions.length > 0) && (
+        <div className="rounded-xl border border-white/[0.08] bg-[#11151D] p-5 space-y-4">
+          <div>
+            <h2 className="font-display text-base font-semibold text-white">
+              Time-Bound Policy Exceptions ({policyExceptions.filter((e) => e.status === 'active').length} active)
+            </h2>
+            <p className="text-xs text-slate-400">
+              Expiring PDP overrides scoped to a specific agent + policy with mandatory audit trail
+            </p>
+          </div>
+
+          {excNotice && (
+            <div
+              role="status"
+              className="rounded-lg border border-emerald-500/30 bg-emerald-500/10 px-3.5 py-2 text-xs text-emerald-300"
+            >
+              {excNotice}
+            </div>
+          )}
+
+          {onCreatePolicyException && (
+            <form
+              onSubmit={handleCreateExceptionSubmit}
+              className="grid grid-cols-1 gap-3 rounded-lg border border-white/[0.08] bg-[#090B10] p-4 md:grid-cols-12"
+            >
+              <div className="md:col-span-3">
+                <label htmlFor="pexc-policy" className="block text-[11px] text-slate-400">
+                  Gateway policy
+                </label>
+                <select
+                  id="pexc-policy"
+                  value={excPolicyId}
+                  onChange={(e) => setExcPolicyId(e.target.value)}
+                  className="mt-1 w-full rounded-lg border border-white/15 bg-[#11151D] px-2.5 py-1.5 font-mono text-xs text-white focus:border-sky-500 focus:outline-none"
+                >
+                  {gatewayPolicies.map((gp) => (
+                    <option key={gp.id} value={gp.id}>
+                      {gp.name}
+                    </option>
+                  ))}
+                  {gatewayPolicies.length === 0 && (
+                    <option value="prevent_payroll_exfiltration">prevent_payroll_exfiltration</option>
+                  )}
+                </select>
+              </div>
+              <div className="md:col-span-3">
+                <label htmlFor="pexc-agent" className="block text-[11px] text-slate-400">
+                  Agent
+                </label>
+                <select
+                  id="pexc-agent"
+                  value={excAgentId}
+                  onChange={(e) => setExcAgentId(e.target.value)}
+                  className="mt-1 w-full rounded-lg border border-white/15 bg-[#11151D] px-2.5 py-1.5 text-xs text-white focus:border-sky-500 focus:outline-none"
+                >
+                  {agents.map((ag) => (
+                    <option key={ag.id} value={ag.id}>
+                      {ag.name}
+                    </option>
+                  ))}
+                </select>
+              </div>
+              <div className="md:col-span-4">
+                <label htmlFor="pexc-just" className="block text-[11px] text-slate-400">
+                  Justification
+                </label>
+                <input
+                  id="pexc-just"
+                  type="text"
+                  value={excJustification}
+                  onChange={(e) => setExcJustification(e.target.value)}
+                  placeholder="e.g. Approved payroll close reconciliation window"
+                  className="mt-1 w-full rounded-lg border border-white/15 bg-[#11151D] px-2.5 py-1.5 text-xs text-white focus:border-sky-500 focus:outline-none"
+                />
+              </div>
+              <div className="md:col-span-2 flex items-end gap-2">
+                <div className="w-16">
+                  <label htmlFor="pexc-days" className="block text-[11px] text-slate-400">
+                    Days
+                  </label>
+                  <input
+                    id="pexc-days"
+                    type="number"
+                    min={1}
+                    max={90}
+                    value={excDays}
+                    onChange={(e) => setExcDays(Number(e.target.value) || 14)}
+                    className="mt-1 w-full rounded-lg border border-white/15 bg-[#11151D] px-2 py-1.5 font-mono text-xs text-white focus:border-sky-500 focus:outline-none"
+                  />
+                </div>
+                <button
+                  type="submit"
+                  disabled={excBusy}
+                  className="flex-1 rounded-lg bg-sky-500 px-3 py-1.5 text-xs font-semibold text-slate-950 hover:bg-sky-400 disabled:opacity-50 whitespace-nowrap"
+                >
+                  {excBusy ? 'Saving...' : 'Grant'}
+                </button>
+              </div>
+              {excError && (
+                <p role="alert" className="md:col-span-12 text-xs text-rose-400">
+                  {excError}
+                </p>
+              )}
+            </form>
+          )}
+
+          {policyExceptions.length > 0 && (
+            <div className="overflow-x-auto">
+              <table className="w-full text-left text-xs">
+                <thead>
+                  <tr className="border-b border-white/[0.08] text-slate-400">
+                    <th className="py-2 pr-3 font-medium">Policy &amp; Agent</th>
+                    <th className="py-2 pr-3 font-medium">Justification</th>
+                    <th className="py-2 pr-3 font-medium">Expires</th>
+                    <th className="py-2 pr-3 font-medium">Status</th>
+                    <th className="py-2 text-right font-medium">Action</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-white/[0.06]">
+                  {policyExceptions.map((exc) => (
+                    <tr key={exc.id}>
+                      <td className="py-2.5 pr-3">
+                        <p className="font-mono text-sky-300">{exc.policyName}</p>
+                        <p className="text-[11px] text-slate-400">{exc.agentName}</p>
+                      </td>
+                      <td className="py-2.5 pr-3 text-slate-300">
+                        <p>{exc.justification}</p>
+                        <p className="text-[11px] text-slate-500">Approved by {exc.approvedBy}</p>
+                      </td>
+                      <td className="py-2.5 pr-3 font-mono text-[11px] text-slate-400 tabular-nums whitespace-nowrap">
+                        {exc.expiresAt.slice(0, 10)}
+                      </td>
+                      <td className="py-2.5 pr-3 font-mono text-[11px]">
+                        <span className={exc.status === 'active' ? 'text-amber-300' : 'text-slate-500'}>
+                          {exc.status}
+                        </span>
+                      </td>
+                      <td className="py-2.5 text-right">
+                        {exc.status === 'active' && onRevokePolicyException && (
+                          <button
+                            type="button"
+                            onClick={() => onRevokePolicyException(exc.id)}
+                            className="rounded border border-rose-500/40 bg-rose-500/10 px-2.5 py-1 text-[11px] text-rose-300 hover:bg-rose-500/20"
+                          >
+                            Revoke
+                          </button>
+                        )}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </div>
+      )}
     </div>
   );
 };

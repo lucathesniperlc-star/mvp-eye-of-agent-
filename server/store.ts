@@ -2,13 +2,18 @@ import crypto from 'node:crypto';
 import type {
   ActivityEvent,
   Agent,
+  AgentLifecycleState,
   AgentStatus,
   AgentType,
+  AiProviderAdapterMeta,
   AllInOneRunResult,
   AllInOneStageResult,
   AuditChainIntegrity,
+  ComplianceException,
   ComplianceFramework,
   Connector,
+  ContainmentActionCatalogItem,
+  ContainmentActionId,
   ControlItem,
   DataSource,
   DemoRequestRecord,
@@ -22,14 +27,18 @@ import type {
   GatewayDecision,
   GatewayEvent,
   GatewayPolicyDefinition,
+  GatewayRuntimeConfig,
   KillSwitchState,
+  McpApprovalStatus,
   McpServer,
+  ModelApprovalStatus,
   ModelAsset,
   PlatformHardeningItem,
   PlaybookDefinition,
   PlaybookExecutionRecord,
   PlaybookId,
   PolicyAction,
+  PolicyException,
   PolicyMode,
   PolicyRule,
   PolicySimulationEvent,
@@ -40,6 +49,9 @@ import type {
   RiskTrendPoint,
   RolloutStage,
   ScimDirectoryUser,
+  SecurityIncident,
+  VerticalPackId,
+  VerticalPolicyPack,
 } from '../src/types/security.ts';
 import {
   DATA_SOURCES,
@@ -64,8 +76,11 @@ import {
   encryptTenantSecret,
 } from './cryptoVault.ts';
 import {
+  AGENT_FRAMEWORKS,
+  AI_PROVIDER_ADAPTERS,
   buildCanonicalAuditPayload,
   computeAuditEventHash,
+  CONTAINMENT_ACTION_CATALOG,
   ENTERPRISE_YAML_POLICIES,
   evaluatePolicyDecisionPoint,
   IDP_GROUP_ROLE_MAP,
@@ -73,7 +88,9 @@ import {
   mapIdpGroupsToRole,
   PLATFORM_HARDENING_MATRIX,
   RESPONSE_PLAYBOOKS,
+  tokenizeSensitiveContent,
   verifyAuditHashChain,
+  VERTICAL_POLICY_PACKS,
 } from './enterpriseEngine.ts';
 import {
   buildDryRunDiff,
@@ -323,6 +340,31 @@ export class TenantDataStore {
   private models: ModelAsset[] = structuredClone(MODELS);
   private dataSources: DataSource[] = structuredClone(DATA_SOURCES);
   private demoRequests: DemoRequestRecord[] = [];
+  private activeVerticalPacks: Record<string, VerticalPackId[]> = {
+    tenant_northwind: ['fintech'],
+    tenant_northwind_eu: ['fintech', 'insurance'],
+  };
+  private policyExceptions: PolicyException[] = [];
+  private gatewayRuntimeConfigs: Record<string, GatewayRuntimeConfig> = {
+    tenant_northwind: {
+      failoverMode: 'fail_closed',
+      responseInspectionEnabled: true,
+      promptInjectionGuardEnabled: true,
+      timeoutMs: 120,
+      updatedAt: '2026-11-16T06:00:00Z',
+      updatedBy: 'ciso@northwind.com',
+    },
+    tenant_northwind_eu: {
+      failoverMode: 'fail_closed',
+      responseInspectionEnabled: true,
+      promptInjectionGuardEnabled: true,
+      timeoutMs: 120,
+      updatedAt: '2026-11-16T06:00:00Z',
+      updatedBy: 'dpo-admin@northwind.eu',
+    },
+  };
+  private incidents: SecurityIncident[] = [];
+  private complianceExceptions: ComplianceException[] = [];
   private nextTicketNum = 4201;
   private nextSnowNum = 8840;
   private persistence: FileStatePersistence;
@@ -388,6 +430,11 @@ export class TenantDataStore {
       models: this.models,
       dataSources: this.dataSources,
       demoRequests: this.demoRequests,
+      activeVerticalPacks: this.activeVerticalPacks,
+      policyExceptions: this.policyExceptions,
+      gatewayRuntimeConfigs: this.gatewayRuntimeConfigs,
+      incidents: this.incidents,
+      complianceExceptions: this.complianceExceptions,
       nextTicketNum: this.nextTicketNum,
       nextSnowNum: this.nextSnowNum,
     });
@@ -455,6 +502,21 @@ export class TenantDataStore {
       if (Array.isArray(data.demoRequests)) {
         this.demoRequests = data.demoRequests as DemoRequestRecord[];
       }
+      if (data.activeVerticalPacks) {
+        this.activeVerticalPacks = data.activeVerticalPacks as Record<string, VerticalPackId[]>;
+      }
+      if (Array.isArray(data.policyExceptions)) {
+        this.policyExceptions = data.policyExceptions as PolicyException[];
+      }
+      if (data.gatewayRuntimeConfigs) {
+        this.gatewayRuntimeConfigs = data.gatewayRuntimeConfigs as Record<string, GatewayRuntimeConfig>;
+      }
+      if (Array.isArray(data.incidents)) {
+        this.incidents = data.incidents as SecurityIncident[];
+      }
+      if (Array.isArray(data.complianceExceptions)) {
+        this.complianceExceptions = data.complianceExceptions as ComplianceException[];
+      }
       if (typeof data.nextTicketNum === 'number') this.nextTicketNum = data.nextTicketNum;
       if (typeof data.nextSnowNum === 'number') this.nextSnowNum = data.nextSnowNum;
       return true;
@@ -507,6 +569,11 @@ export class TenantDataStore {
       models: fresh.models,
       dataSources: fresh.dataSources,
       demoRequests: [],
+      activeVerticalPacks: fresh.activeVerticalPacks,
+      policyExceptions: fresh.policyExceptions,
+      gatewayRuntimeConfigs: fresh.gatewayRuntimeConfigs,
+      incidents: fresh.incidents,
+      complianceExceptions: fresh.complianceExceptions,
       nextTicketNum: 4201,
       nextSnowNum: 8840,
     });
@@ -1487,6 +1554,89 @@ export class TenantDataStore {
       },
       executedAt: '2026-11-16T08:32:00Z',
     });
+
+    this.policyExceptions = [
+      {
+        id: 'exc_seed_01',
+        tenantId: 'tenant_northwind',
+        policyId: 'redact_customer_pii',
+        policyName: 'Redact customer PII in prompts',
+        agentId: 'agent_support',
+        agentName: 'Support Agent',
+        justification: 'Approved customer-verified callback workflow for Tier-2 VIP desk',
+        approvedBy: 'ciso@northwind.com',
+        expiresAt: new Date(Date.now() + 14 * 86400000).toISOString(),
+        status: 'active',
+        createdAt: '2026-11-15T10:00:00Z',
+      },
+    ];
+
+    this.incidents = [
+      {
+        id: 'inc_nw_001',
+        tenantId: 'tenant_northwind',
+        title: 'Payroll PII exfiltration path & high-privilege token exposure',
+        severity: 'critical',
+        status: 'open',
+        agentId: 'agent_finance_copilot',
+        agentName: 'Finance Copilot',
+        correlatedFindingIds: ['finding_001'],
+        correlatedEventIds: ['gw_seed_01'],
+        signalSummary: 'Finance Copilot holds wildcard PayrollExporter -> s3:GetObject access to employee_pii while routing through external OpenAI endpoint.',
+        recommendedActions: ['restrict_data_access', 'remove_privileged_group', 'rotate_client_secret', 'quarantine_agent'],
+        executedActions: [],
+        createdAt: '2026-11-16T07:45:00Z',
+        updatedAt: '2026-11-16T08:30:00Z',
+      },
+      {
+        id: 'inc_nw_002',
+        tenantId: 'tenant_northwind',
+        title: 'Shadow AI marketing bot using unmanaged MCP & local OSS model',
+        severity: 'high',
+        status: 'investigating',
+        agentId: 'agent_marketing_content',
+        agentName: 'Marketing Content Agent',
+        correlatedFindingIds: ['finding_003'],
+        correlatedEventIds: [],
+        signalSummary: 'Marketing Content Agent reached Snowflake HNW PII via pat-marketing-analytics-02 and transmitted via web-tools-mcp (unapproved) + ollama-local-llama3.',
+        recommendedActions: ['disable_unapproved_mcp', 'remove_unapproved_model', 'disable_api_key', 'quarantine_agent'],
+        executedActions: [],
+        createdAt: '2026-11-16T08:10:00Z',
+        updatedAt: '2026-11-16T08:40:00Z',
+      },
+      {
+        id: 'inc_eu_001',
+        tenantId: 'tenant_northwind_eu',
+        title: 'SEPA Treasury Copilot cross-border ledger query anomaly',
+        severity: 'high',
+        status: 'open',
+        agentId: 'agent_eu_treasury',
+        agentName: 'SEPA Treasury Copilot',
+        correlatedFindingIds: ['finding_007'],
+        correlatedEventIds: [],
+        signalSummary: 'Cross-border SEPA IBAN settlement query lacked country row-level filter under GDPR Art. 44.',
+        recommendedActions: ['restrict_data_access', 'revoke_oauth_grant', 'quarantine_agent'],
+        executedActions: [],
+        createdAt: '2026-11-16T08:20:00Z',
+        updatedAt: '2026-11-16T08:20:00Z',
+      },
+    ];
+
+    this.complianceExceptions = [
+      {
+        id: 'cexc_nw_01',
+        tenantId: 'tenant_northwind',
+        controlId: 'ctrl_eu_ai_act',
+        controlCode: 'Art. 14',
+        framework: 'EU AI Act',
+        reason: 'Legacy Batch Scoring Pilot transitioning to gateway approval gate before Q1 freeze',
+        compensatingControl: 'Mandatory nightly SOC diff + read-only ERP replica isolation',
+        approvedBy: 'grc@northwind.com',
+        expiresAt: new Date(Date.now() + 30 * 86400000).toISOString(),
+        status: 'active',
+        createdAt: '2026-11-10T12:00:00Z',
+      },
+    ];
   }
 
   // ---- Identity, Membership & Session Operations ----
@@ -2262,7 +2412,17 @@ export class TenantDataStore {
     return this.withTenantContext(tenantId, (tid) => {
       const nodes = this.graphNodes.filter((n) => n.tenantId === tid);
       const edges = this.graphEdges.filter((e) => e.tenantId === tid);
-      const paths = findSensitiveExposurePaths(nodes, edges, tid, agentId);
+      const rawPaths = findSensitiveExposurePaths(nodes, edges, tid, agentId);
+      const agentStatusMap = new Map(
+        this.agents.filter((a) => a.tenantId === tid).map((a) => [a.id, a])
+      );
+      const paths = rawPaths.map((p) => {
+        const ag = agentStatusMap.get(p.agentId);
+        if (ag?.status === 'quarantined') {
+          return { ...p, pathState: 'remediated' as const };
+        }
+        return p;
+      });
       return { nodes, edges, paths };
     });
   }
@@ -2274,6 +2434,11 @@ export class TenantDataStore {
     gatewayPolicies: GatewayPolicyDefinition[];
     gatewayEvents: GatewayEvent[];
     retentionConfig: RetentionPolicyConfig;
+    activeVerticalPacks: VerticalPackId[];
+    verticalPacksCatalog: VerticalPolicyPack[];
+    providerAdapters: AiProviderAdapterMeta[];
+    policyExceptions: PolicyException[];
+    gatewayRuntimeConfig: GatewayRuntimeConfig;
   } {
     return this.withTenantContext(tenantId, (tid) => ({
       mode: this.policyModes[tid] ?? 'observe',
@@ -2282,6 +2447,18 @@ export class TenantDataStore {
       gatewayPolicies: this.gatewayPolicies[tid] ?? [],
       gatewayEvents: this.gatewayEvents.filter((e) => e.tenant_id === tid),
       retentionConfig: this.retentionConfigs[tid] ?? { ...DEFAULT_RETENTION_POLICY },
+      activeVerticalPacks: this.activeVerticalPacks[tid] ?? [],
+      verticalPacksCatalog: VERTICAL_POLICY_PACKS,
+      providerAdapters: AI_PROVIDER_ADAPTERS,
+      policyExceptions: this.policyExceptions.filter((e) => e.tenantId === tid),
+      gatewayRuntimeConfig: this.gatewayRuntimeConfigs[tid] ?? {
+        failoverMode: 'fail_closed',
+        responseInspectionEnabled: true,
+        promptInjectionGuardEnabled: true,
+        timeoutMs: 120,
+        updatedAt: new Date().toISOString(),
+        updatedBy: 'system',
+      },
     }));
   }
 
@@ -3205,6 +3382,13 @@ export class TenantDataStore {
     trendSeries: RiskTrendPoint[];
     connectors: Connector[];
     demoRequests: DemoRequestRecord[];
+    incidents: SecurityIncident[];
+    complianceExceptions: ComplianceException[];
+    activeVerticalPacks: VerticalPackId[];
+    verticalPacksCatalog: VerticalPolicyPack[];
+    providerAdapters: AiProviderAdapterMeta[];
+    agentFrameworks: typeof AGENT_FRAMEWORKS;
+    containmentCatalog: ContainmentActionCatalogItem[];
   } {
     return this.withTenantContext(tenantId, (tid) => {
       const tenant = this.getTenant(tid);
@@ -3252,6 +3436,13 @@ export class TenantDataStore {
         trendSeries: RISK_TREND_SERIES[tid] ?? RISK_TREND_SERIES.tenant_northwind,
         connectors,
         demoRequests: this.demoRequests,
+        incidents: this.incidents.filter((i) => i.tenantId === tid),
+        complianceExceptions: this.complianceExceptions.filter((c) => c.tenantId === tid),
+        activeVerticalPacks: this.activeVerticalPacks[tid] ?? [],
+        verticalPacksCatalog: VERTICAL_POLICY_PACKS,
+        providerAdapters: AI_PROVIDER_ADAPTERS,
+        agentFrameworks: AGENT_FRAMEWORKS,
+        containmentCatalog: CONTAINMENT_ACTION_CATALOG,
       };
     });
   }
@@ -3290,6 +3481,13 @@ export class TenantDataStore {
     auditIntegrity: AuditChainIntegrity;
     auditRetentionDays: number;
     lastAllInOneRun?: AllInOneRunResult;
+    gatewayRuntimeConfig: GatewayRuntimeConfig;
+    incidents: SecurityIncident[];
+    containmentCatalog: ContainmentActionCatalogItem[];
+    activeVerticalPacks: VerticalPackId[];
+    verticalPacksCatalog: VerticalPolicyPack[];
+    providerAdapters: AiProviderAdapterMeta[];
+    agentFrameworks: typeof AGENT_FRAMEWORKS;
   } {
     return this.withTenantContext(tenantId, (tid) => ({
       rolloutStage: this.rolloutStages[tid] ?? 'observe',
@@ -3308,6 +3506,20 @@ export class TenantDataStore {
       auditIntegrity: this.getAuditIntegrity(tid),
       auditRetentionDays: Math.max(365, this.auditRetentionDays[tid] ?? 365),
       lastAllInOneRun: this.lastAllInOneRuns[tid],
+      gatewayRuntimeConfig: this.gatewayRuntimeConfigs[tid] ?? {
+        failoverMode: 'fail_closed',
+        responseInspectionEnabled: true,
+        promptInjectionGuardEnabled: true,
+        timeoutMs: 120,
+        updatedAt: new Date().toISOString(),
+        updatedBy: 'system',
+      },
+      incidents: this.incidents.filter((i) => i.tenantId === tid),
+      containmentCatalog: CONTAINMENT_ACTION_CATALOG,
+      activeVerticalPacks: this.activeVerticalPacks[tid] ?? [],
+      verticalPacksCatalog: VERTICAL_POLICY_PACKS,
+      providerAdapters: AI_PROVIDER_ADAPTERS,
+      agentFrameworks: AGENT_FRAMEWORKS,
     }));
   }
 
@@ -3320,10 +3532,12 @@ export class TenantDataStore {
       tool: string;
       mcpServer?: string;
       promptText?: string;
+      responseText?: string;
       targetResource?: string;
       requestedActionOverride?: EnforcementAction;
       mfaVerified?: boolean;
       replayNonce?: string;
+      simulatePdpUnavailable?: boolean;
     },
     actor: { id: string; email: string; role: Role }
   ): {
@@ -3333,6 +3547,7 @@ export class TenantDataStore {
     pdpReason: string;
     enforced: boolean;
     playbookExecution?: PlaybookExecutionRecord;
+    incident?: SecurityIncident;
   } {
     return this.withTenantContext(tenantId, (tid) => {
       if (input.replayNonce) {
@@ -3368,6 +3583,16 @@ export class TenantDataStore {
       const killSwitchPaused = Boolean(killSwitch?.paused);
       const model = input.model ?? agent.models[0] ?? 'gpt-4.1';
       const mcpServer = input.mcpServer ?? agent.mcpServers[0] ?? 'finance-mcp';
+      const runtimeCfg = this.gatewayRuntimeConfigs[tid];
+      const modelAsset = this.models.find((m) => m.id === model);
+      const mcpAsset = this.mcpServers.find((s) => s.id === mcpServer);
+      const matchingException = this.policyExceptions.find(
+        (ex) =>
+          ex.tenantId === tid &&
+          ex.status === 'active' &&
+          ex.agentId === agent.id &&
+          Date.parse(ex.expiresAt) > Date.now()
+      );
 
       const pdp = evaluatePolicyDecisionPoint({
         agent,
@@ -3379,7 +3604,28 @@ export class TenantDataStore {
         killSwitchPaused,
         requestedActionOverride: input.requestedActionOverride,
         mfaVerified: input.mfaVerified,
+        modelApprovalStatus: modelAsset?.approvalStatus,
+        mcpApprovalStatus: mcpAsset?.approvalStatus,
+        activeException: matchingException,
+        pdpUnavailable: Boolean(input.simulatePdpUnavailable),
+        failoverMode: runtimeCfg?.failoverMode ?? 'fail_closed',
       });
+
+      let responseTokenizedPreview: string | undefined;
+      if (runtimeCfg?.responseInspectionEnabled && input.responseText) {
+        const respPreview = tokenizeSensitiveContent(input.responseText);
+        if (respPreview !== input.responseText) {
+          responseTokenizedPreview = respPreview;
+          pdp.classification.matchedSignals = Array.from(
+            new Set([...pdp.classification.matchedSignals, 'response_payload_pii_redacted'])
+          );
+          if (pdp.decision === 'allow') {
+            pdp.decision = 'redact';
+            pdp.reason = 'Response inspection redacted sensitive tokens in model output.';
+            pdp.tokenizedPreview = respPreview;
+          }
+        }
+      }
 
       const enforced = !killSwitchPaused && isDecisionEnforcedAtStage(rolloutStage, pdp.decision);
       const policyDecision: GatewayDecision = enforced
@@ -3469,7 +3715,7 @@ export class TenantDataStore {
         latency_ms: 9,
         forwarded,
         content_retained: false,
-        tokenized_preview: pdp.tokenizedPreview,
+        tokenized_preview: responseTokenizedPreview ?? pdp.tokenizedPreview,
         effective_identity: pdp.effectiveIdentity,
         effective_model: pdp.effectiveModel,
         approval_request_id: approvalRequestId,
@@ -3480,6 +3726,41 @@ export class TenantDataStore {
       };
 
       this.gatewayEvents.unshift(event);
+
+      let correlatedIncident: SecurityIncident | undefined;
+      if (pdp.decision === 'block' || pdp.decision === 'quarantine_agent' || pdp.decision === 'escalate') {
+        const existingIncIdx = this.incidents.findIndex(
+          (i) => i.tenantId === tid && i.agentId === agent.id && i.status !== 'resolved'
+        );
+        if (existingIncIdx !== -1) {
+          const existingInc = this.incidents[existingIncIdx];
+          correlatedIncident = {
+            ...existingInc,
+            correlatedEventIds: Array.from(new Set([eventId, ...existingInc.correlatedEventIds])),
+            signalSummary: `${pdp.reason} (${existingInc.correlatedEventIds.length + 1} correlated events)`,
+            updatedAt: now,
+          };
+          this.incidents[existingIncIdx] = correlatedIncident;
+        } else {
+          correlatedIncident = {
+            id: `inc_${crypto.randomUUID().slice(0, 8)}`,
+            tenantId: tid,
+            title: `${agent.name} triggered ${pdp.policyRule}`,
+            severity: pdp.decision === 'quarantine_agent' ? 'critical' : 'high',
+            status: 'open',
+            agentId: agent.id,
+            agentName: agent.name,
+            correlatedFindingIds: agent.findings.map((f) => f.id),
+            correlatedEventIds: [eventId],
+            signalSummary: pdp.reason,
+            recommendedActions: ['disable_unapproved_mcp', 'remove_unapproved_model', 'restrict_data_access', 'quarantine_agent'],
+            executedActions: [],
+            createdAt: now,
+            updatedAt: now,
+          };
+          this.incidents.unshift(correlatedIncident);
+        }
+      }
 
       const tIdx = this.tenants.findIndex((t) => t.id === tid);
       if (tIdx !== -1) {
@@ -3510,13 +3791,14 @@ export class TenantDataStore {
           rolloutStage,
           effectiveIdentity: pdp.effectiveIdentity,
           effectiveModel: pdp.effectiveModel,
-          tokenized: Boolean(pdp.tokenizedPreview),
+          tokenized: Boolean(pdp.tokenizedPreview || responseTokenizedPreview),
         },
         reason: event.pdp_reason,
         approval_id: approvalRequestId,
         evidence_id: evidenceRecord.id,
       });
 
+      this.persistState();
       return {
         event,
         evidenceRecord,
@@ -3524,6 +3806,7 @@ export class TenantDataStore {
         pdpReason: event.pdp_reason ?? pdp.reason,
         enforced,
         playbookExecution,
+        incident: correlatedIncident,
       };
     });
   }
@@ -5246,6 +5529,630 @@ export class TenantDataStore {
         };
       this.persistState();
       return { control: updatedControl, evidenceRecord: record };
+    });
+  }
+
+  // ---- Agent Lifecycle Sanctioning, Vertical Policy Packs, Approved AI Registry, Exceptions, Gateway Failover & 8-Action Incident Containment ----
+
+  reviewAgentLifecycle(
+    tenantId: string,
+    agentId: string,
+    input: {
+      action: 'verify' | 'sanction' | 'unsanction' | 'retire';
+      owner?: string;
+      ownerTeam?: string;
+      reason?: string;
+    },
+    actor: { id: string; email: string; role: Role }
+  ): Agent {
+    return this.withTenantContext(tenantId, (tid) => {
+      const idx = this.agents.findIndex((a) => a.id === agentId && a.tenantId === tid);
+      if (idx === -1) throw new Error('Agent not found in tenant scope');
+      const prev = { ...this.agents[idx] };
+
+      let nextLifecycle: AgentLifecycleState = prev.lifecycleState ?? 'discovered';
+      let nextConfidence = prev.confidenceScore ?? 75;
+      let nextStatus: AgentStatus = prev.status;
+      let nextType: AgentType = prev.type;
+      let nextOwner = input.owner?.trim() || prev.owner;
+      const nextOwnerTeam = input.ownerTeam?.trim() || prev.ownerTeam;
+
+      if (input.action === 'verify' || input.action === 'sanction') {
+        nextLifecycle = 'sanctioned';
+        nextConfidence = Math.max(96, nextConfidence);
+        if (nextOwner === 'unassigned') nextOwner = actor.email;
+        if (nextType === 'Unowned' || nextType === 'Shadow AI') nextType = 'Internal agent';
+        nextStatus = 'active';
+      } else if (input.action === 'unsanction') {
+        nextLifecycle = 'unsanctioned';
+        nextConfidence = Math.max(90, nextConfidence);
+        nextStatus = 'restricted';
+      } else if (input.action === 'retire') {
+        nextLifecycle = 'retired';
+        nextConfidence = 100;
+        nextStatus = 'restricted';
+      }
+
+      this.agents[idx] = {
+        ...prev,
+        lifecycleState: nextLifecycle,
+        confidenceScore: nextConfidence,
+        status: nextStatus,
+        type: nextType,
+        owner: nextOwner,
+        ownerTeam: nextOwnerTeam,
+      };
+
+      this.recomputeTenantRiskAssessments(tid, { agentId, overrides: {} });
+      const tenant = this.getTenant(tid);
+      const tenantAgents = this.agents.filter((a) => a.tenantId === tid);
+      tenant.unownedAgents = tenantAgents.filter((a) => a.owner === 'unassigned' || a.type === 'Unowned').length;
+      tenant.shadowAgents = tenantAgents.filter((a) => a.type === 'Shadow AI').length;
+
+      const updated = this.agents[idx];
+      this.activity.unshift({
+        id: `act_${crypto.randomUUID()}`,
+        tenantId: tid,
+        timestamp: 'Just now',
+        category: 'policy',
+        title: `Lifecycle review (${input.action}): ${updated.name}`,
+        detail: `State: ${nextLifecycle} · Confidence ${nextConfidence}% · Owner ${updated.owner}`,
+        severity: nextLifecycle === 'sanctioned' ? 'nominal' : 'high',
+      });
+
+      this.recordAuditEvent({
+        tenantId: tid,
+        actorId: actor.id,
+        actorEmail: actor.email,
+        actorRole: actor.role,
+        action: `agent.lifecycle_${input.action}`,
+        resourceType: 'agent',
+        resourceId: agentId,
+        outcome: 'allowed',
+        before: { lifecycleState: prev.lifecycleState, confidenceScore: prev.confidenceScore, status: prev.status, owner: prev.owner },
+        after: { lifecycleState: nextLifecycle, confidenceScore: nextConfidence, status: nextStatus, owner: nextOwner },
+        reason: input.reason || `Operator marked agent lifecycle as ${nextLifecycle}`,
+      });
+      this.persistState();
+      return updated;
+    });
+  }
+
+  getVerticalPacks(tenantId: string): {
+    activePackIds: VerticalPackId[];
+    packs: VerticalPolicyPack[];
+  } {
+    return this.withTenantContext(tenantId, (tid) => ({
+      activePackIds: this.activeVerticalPacks[tid] ?? [],
+      packs: VERTICAL_POLICY_PACKS,
+    }));
+  }
+
+  toggleVerticalPack(
+    tenantId: string,
+    packId: VerticalPackId,
+    install: boolean,
+    actor: { id: string; email: string; role: Role }
+  ): {
+    activePackIds: VerticalPackId[];
+    pack: VerticalPolicyPack;
+    rulesAdded: number;
+  } {
+    return this.withTenantContext(tenantId, (tid) => {
+      const pack = VERTICAL_POLICY_PACKS.find((p) => p.id === packId);
+      if (!pack) throw new Error('Vertical policy pack not found');
+      const current = new Set(this.activeVerticalPacks[tid] ?? []);
+      let rulesAdded = 0;
+
+      if (install) {
+        current.add(packId);
+        const existingRules = this.policyRules[tid] ?? [];
+        for (const defRule of pack.defaultRules) {
+          const ruleId = `pack_${packId}_${defRule.name.toLowerCase().replace(/[^a-z0-9]+/g, '_').slice(0, 24)}`;
+          if (!existingRules.some((r) => r.id === ruleId || r.name === defRule.name)) {
+            existingRules.unshift({
+              id: ruleId,
+              name: defRule.name,
+              scope: defRule.scope,
+              condition: defRule.condition,
+              action: defRule.action,
+              observeHits24h: 0,
+              enabled: true,
+              lastTriggered: `Installed via ${pack.name}`,
+            });
+            rulesAdded += 1;
+          }
+        }
+        this.policyRules[tid] = existingRules;
+
+        const gwId = `${packId}_pack_policy`;
+        const existingGw = this.gatewayPolicies[tid] ?? [];
+        if (!existingGw.some((g) => g.id === gwId)) {
+          existingGw.unshift({
+            id: gwId,
+            name: `${pack.name} Guardrail`,
+            scope: { agents: ['*'], tools: ['*'], data_classification: pack.frameworks },
+            decision: 'block',
+            mode: this.policyModes[tid] ?? 'observe',
+            severity: 'high',
+            actions: ['log_decision', 'attach_evidence'],
+            enabled: true,
+            observeHits24h: 0,
+            lastTriggered: 'Just installed',
+            yaml: pack.gatewayYamlTemplate,
+          });
+          this.gatewayPolicies[tid] = existingGw;
+        }
+      } else {
+        current.delete(packId);
+      }
+
+      this.activeVerticalPacks[tid] = Array.from(current);
+      this.appendEvidenceRecord({
+        tenantId: tid,
+        controlId: 'SOC2_CC6.1',
+        framework: 'SOC 2',
+        mappedFrameworks: ['SOC 2', 'ISO 27001', 'EU AI Act'],
+        evidenceType: 'policy_decision',
+        source: 'vertical_pack_catalog',
+        resourceId: packId,
+        title: `${install ? 'Installed' : 'Deactivated'} Vertical Policy Pack: ${pack.name}`,
+        summary: `${pack.frameworks.join(', ')} baseline pack ${install ? 'activated' : 'deactivated'} by ${actor.email}.`,
+        payload: { packId, install, frameworks: pack.frameworks, rulesAdded },
+      });
+
+      this.recordAuditEvent({
+        tenantId: tid,
+        actorId: actor.id,
+        actorEmail: actor.email,
+        actorRole: actor.role,
+        action: install ? 'policy.vertical_pack_installed' : 'policy.vertical_pack_removed',
+        resourceType: 'vertical_pack',
+        resourceId: packId,
+        outcome: 'allowed',
+        before: null,
+        after: { packId, activePackIds: this.activeVerticalPacks[tid], rulesAdded },
+      });
+      this.persistState();
+      return { activePackIds: this.activeVerticalPacks[tid], pack, rulesAdded };
+    });
+  }
+
+  updateModelApproval(
+    tenantId: string,
+    modelId: string,
+    approvalStatus: ModelApprovalStatus,
+    actor: { id: string; email: string; role: Role }
+  ): ModelAsset {
+    return this.withTenantContext(tenantId, (tid) => {
+      const idx = this.models.findIndex((m) => m.id === modelId);
+      if (idx === -1) throw new Error('Model asset not found');
+      const prev = this.models[idx];
+      this.models[idx] = { ...prev, approvalStatus };
+      this.recordAuditEvent({
+        tenantId: tid,
+        actorId: actor.id,
+        actorEmail: actor.email,
+        actorRole: actor.role,
+        action: 'registry.model_approval_updated',
+        resourceType: 'model_asset',
+        resourceId: modelId,
+        outcome: 'allowed',
+        before: { approvalStatus: prev.approvalStatus },
+        after: { approvalStatus },
+      });
+      this.persistState();
+      return this.models[idx];
+    });
+  }
+
+  updateMcpApproval(
+    tenantId: string,
+    mcpId: string,
+    approvalStatus: McpApprovalStatus,
+    actor: { id: string; email: string; role: Role }
+  ): McpServer {
+    return this.withTenantContext(tenantId, (tid) => {
+      const idx = this.mcpServers.findIndex((m) => m.id === mcpId);
+      if (idx === -1) throw new Error('MCP server not found');
+      const prev = this.mcpServers[idx];
+      this.mcpServers[idx] = { ...prev, approvalStatus };
+      this.recordAuditEvent({
+        tenantId: tid,
+        actorId: actor.id,
+        actorEmail: actor.email,
+        actorRole: actor.role,
+        action: 'registry.mcp_approval_updated',
+        resourceType: 'mcp_server',
+        resourceId: mcpId,
+        outcome: 'allowed',
+        before: { approvalStatus: prev.approvalStatus },
+        after: { approvalStatus },
+      });
+      this.persistState();
+      return this.mcpServers[idx];
+    });
+  }
+
+  createPolicyException(
+    tenantId: string,
+    input: { policyId: string; agentId: string; justification: string; expiresInDays?: number },
+    actor: { id: string; email: string; role: Role }
+  ): PolicyException {
+    return this.withTenantContext(tenantId, (tid) => {
+      const agent = this.agents.find((a) => a.id === input.agentId && a.tenantId === tid);
+      if (!agent) throw new Error('Agent not found in tenant scope');
+      const justification = input.justification.trim();
+      if (!justification) throw new Error('Exception justification is required.');
+      const gwPolicy = (this.gatewayPolicies[tid] ?? []).find((p) => p.id === input.policyId);
+      const days = Math.max(1, Math.min(90, Number(input.expiresInDays ?? 14)));
+      const now = new Date();
+      const record: PolicyException = {
+        id: `pexc_${crypto.randomUUID().slice(0, 8)}`,
+        tenantId: tid,
+        policyId: input.policyId,
+        policyName: gwPolicy?.name ?? input.policyId,
+        agentId: agent.id,
+        agentName: agent.name,
+        justification,
+        approvedBy: actor.email,
+        expiresAt: new Date(now.getTime() + days * 86400000).toISOString(),
+        status: 'active',
+        createdAt: now.toISOString(),
+      };
+      this.policyExceptions.unshift(record);
+      this.recordAuditEvent({
+        tenantId: tid,
+        actorId: actor.id,
+        actorEmail: actor.email,
+        actorRole: actor.role,
+        action: 'policy.exception_granted',
+        resourceType: 'policy_exception',
+        resourceId: record.id,
+        outcome: 'allowed',
+        before: null,
+        after: { policyId: record.policyId, agentId: record.agentId, expiresAt: record.expiresAt },
+        reason: justification,
+      });
+      this.persistState();
+      return record;
+    });
+  }
+
+  revokePolicyException(
+    tenantId: string,
+    exceptionId: string,
+    actor: { id: string; email: string; role: Role }
+  ): PolicyException {
+    return this.withTenantContext(tenantId, (tid) => {
+      const idx = this.policyExceptions.findIndex((e) => e.id === exceptionId && e.tenantId === tid);
+      if (idx === -1) throw new Error('Policy exception not found');
+      this.policyExceptions[idx] = { ...this.policyExceptions[idx], status: 'revoked' };
+      this.recordAuditEvent({
+        tenantId: tid,
+        actorId: actor.id,
+        actorEmail: actor.email,
+        actorRole: actor.role,
+        action: 'policy.exception_revoked',
+        resourceType: 'policy_exception',
+        resourceId: exceptionId,
+        outcome: 'allowed',
+        before: { status: 'active' },
+        after: { status: 'revoked' },
+      });
+      this.persistState();
+      return this.policyExceptions[idx];
+    });
+  }
+
+  updateGatewayRuntimeConfig(
+    tenantId: string,
+    updates: Partial<Pick<GatewayRuntimeConfig, 'failoverMode' | 'responseInspectionEnabled' | 'promptInjectionGuardEnabled' | 'timeoutMs'>>,
+    actor: { id: string; email: string; role: Role }
+  ): GatewayRuntimeConfig {
+    return this.withTenantContext(tenantId, (tid) => {
+      const prev = this.gatewayRuntimeConfigs[tid] ?? {
+        failoverMode: 'fail_closed',
+        responseInspectionEnabled: true,
+        promptInjectionGuardEnabled: true,
+        timeoutMs: 120,
+        updatedAt: new Date().toISOString(),
+        updatedBy: actor.email,
+      };
+      const next: GatewayRuntimeConfig = {
+        failoverMode: updates.failoverMode ?? prev.failoverMode,
+        responseInspectionEnabled: updates.responseInspectionEnabled ?? prev.responseInspectionEnabled,
+        promptInjectionGuardEnabled: updates.promptInjectionGuardEnabled ?? prev.promptInjectionGuardEnabled,
+        timeoutMs: updates.timeoutMs ?? prev.timeoutMs,
+        updatedAt: new Date().toISOString(),
+        updatedBy: actor.email,
+      };
+      this.gatewayRuntimeConfigs[tid] = next;
+      this.recordAuditEvent({
+        tenantId: tid,
+        actorId: actor.id,
+        actorEmail: actor.email,
+        actorRole: actor.role,
+        action: 'gateway.runtime_config_updated',
+        resourceType: 'gateway_config',
+        resourceId: tid,
+        outcome: 'allowed',
+        before: { failoverMode: prev.failoverMode, responseInspectionEnabled: prev.responseInspectionEnabled },
+        after: { failoverMode: next.failoverMode, responseInspectionEnabled: next.responseInspectionEnabled },
+      });
+      this.persistState();
+      return next;
+    });
+  }
+
+  getIncidents(tenantId: string): SecurityIncident[] {
+    return this.withTenantContext(tenantId, (tid) =>
+      this.incidents.filter((i) => i.tenantId === tid)
+    );
+  }
+
+  containIncident(
+    tenantId: string,
+    incidentId: string,
+    input: { action: ContainmentActionId; approve?: boolean; dryRun?: boolean },
+    actor: { id: string; email: string; role: Role }
+  ): { incident: SecurityIncident; agent?: Agent; dryRunDiff?: string } {
+    return this.withTenantContext(tenantId, (tid) => {
+      const incIdx = this.incidents.findIndex((i) => i.id === incidentId && i.tenantId === tid);
+      if (incIdx === -1) throw new Error('Incident not found in tenant scope');
+      const inc = this.incidents[incIdx];
+      const catalogItem = CONTAINMENT_ACTION_CATALOG.find((c) => c.id === input.action);
+      if (!catalogItem) throw new Error('Unknown containment action');
+
+      const aIdx = this.agents.findIndex((a) => a.id === inc.agentId && a.tenantId === tid);
+      const agent = aIdx !== -1 ? this.agents[aIdx] : undefined;
+
+      if (catalogItem.requiresApproval && !input.approve && !input.dryRun) {
+        this.recordAuditEvent({
+          tenantId: tid,
+          actorId: actor.id,
+          actorEmail: actor.email,
+          actorRole: actor.role,
+          action: 'incident.containment_approval_required',
+          resourceType: 'incident',
+          resourceId: incidentId,
+          outcome: 'denied',
+          before: { status: inc.status },
+          after: { blockedAction: input.action },
+          reason: `Action '${catalogItem.label}' requires explicit human approval`,
+        });
+        throw new Error(`Approval required: '${catalogItem.label}' requires explicit human confirmation.`);
+      }
+
+      const dryRunDiff = `Dry-run impact on ${inc.agentName}: execute '${catalogItem.label}' (${catalogItem.targetType} target; reversible=${catalogItem.reversible}).`;
+      const now = new Date().toISOString();
+
+      const evidence = this.appendEvidenceRecord({
+        tenantId: tid,
+        controlId: 'SOC2_CC7.2',
+        framework: 'SOC 2',
+        mappedFrameworks: ['SOC 2', 'ISO 27001', 'EU AI Act'],
+        evidenceType: input.dryRun ? 'policy_decision' : 'remediation_proof',
+        source: 'incident_containment',
+        resourceId: `${incidentId}/${input.action}`,
+        title: `${input.dryRun ? '[Dry-Run] ' : ''}Incident Containment: ${catalogItem.label} on ${inc.agentName}`,
+        summary: dryRunDiff,
+        payload: { incidentId, action: input.action, dryRun: Boolean(input.dryRun), approved: Boolean(input.approve) },
+      });
+
+      if (!input.dryRun && agent) {
+        if (input.action === 'quarantine_agent') {
+          this.agents[aIdx] = { ...agent, status: 'quarantined' };
+        } else if (input.action === 'restrict_data_access') {
+          this.agents[aIdx] = {
+            ...agent,
+            status: 'restricted',
+            permissions: agent.permissions.map((p) => (p.includes('Write') || p.includes('*') ? `${p}:scoped_readonly` : p)),
+          };
+        } else if (input.action === 'remove_privileged_group' || input.action === 'revoke_oauth_grant') {
+          this.agents[aIdx] = {
+            ...agent,
+            permissions: agent.permissions.filter((p) => !p.includes('*') && !p.includes('ReadWrite')),
+          };
+        } else if (input.action === 'remove_unapproved_model') {
+          for (let i = 0; i < this.models.length; i += 1) {
+            if (agent.models.includes(this.models[i].id) && this.models[i].approvalStatus !== 'approved') {
+              this.models[i] = { ...this.models[i], approvalStatus: 'unapproved' };
+            }
+          }
+          const approvedOnly = agent.models.filter((mid) => {
+            const m = this.models.find((x) => x.id === mid);
+            return !m || m.approvalStatus === 'approved';
+          });
+          this.agents[aIdx] = {
+            ...agent,
+            models: approvedOnly.length > 0 ? approvedOnly : ['gpt-4.1'],
+          };
+        } else if (input.action === 'disable_unapproved_mcp') {
+          for (let i = 0; i < this.mcpServers.length; i += 1) {
+            if (agent.mcpServers.includes(this.mcpServers[i].id) && this.mcpServers[i].approvalStatus !== 'approved') {
+              this.mcpServers[i] = { ...this.mcpServers[i], approvalStatus: 'disabled' };
+            }
+          }
+        } else if (input.action === 'disable_api_key' || input.action === 'rotate_client_secret') {
+          this.agents[aIdx] = {
+            ...agent,
+            status: 'restricted',
+          };
+        }
+        this.recomputeTenantRiskAssessments(tid, { agentId: agent.id, overrides: {} });
+      }
+
+      const updatedInc: SecurityIncident = {
+        ...inc,
+        status: input.dryRun ? inc.status : input.action === 'quarantine_agent' ? 'resolved' : 'contained',
+        executedActions: [
+          {
+            action: input.action,
+            label: catalogItem.label,
+            executedAt: now,
+            executedBy: actor.email,
+            approved: Boolean(input.approve),
+            dryRun: Boolean(input.dryRun),
+            evidenceId: evidence.id,
+            summary: input.dryRun ? dryRunDiff : `Executed ${catalogItem.label} safely with rollback snapshot`,
+          },
+          ...inc.executedActions,
+        ],
+        updatedAt: now,
+      };
+      this.incidents[incIdx] = updatedInc;
+
+      this.recordAuditEvent({
+        tenantId: tid,
+        actorId: actor.id,
+        actorEmail: actor.email,
+        actorRole: actor.role,
+        action: input.dryRun ? 'incident.containment_dry_run' : `incident.containment_${input.action}`,
+        resourceType: 'incident',
+        resourceId: incidentId,
+        outcome: 'allowed',
+        before: { status: inc.status },
+        after: { status: updatedInc.status, action: input.action, dryRun: Boolean(input.dryRun) },
+        evidence_id: evidence.id,
+        reason: dryRunDiff,
+      });
+
+      this.persistState();
+      return {
+        incident: updatedInc,
+        agent: aIdx !== -1 ? this.agents[aIdx] : undefined,
+        dryRunDiff,
+      };
+    });
+  }
+
+  getComplianceExceptions(tenantId: string): ComplianceException[] {
+    return this.withTenantContext(tenantId, (tid) =>
+      this.complianceExceptions.filter((c) => c.tenantId === tid)
+    );
+  }
+
+  createComplianceException(
+    tenantId: string,
+    input: {
+      controlId: string;
+      reason: string;
+      compensatingControl: string;
+      expiresInDays?: number;
+    },
+    actor: { id: string; email: string; role: Role }
+  ): ComplianceException {
+    return this.withTenantContext(tenantId, (tid) => {
+      const ctrl = GOVERNANCE_CONTROLS.find(
+        (c) => c.id === input.controlId || c.code === input.controlId
+      );
+      if (!ctrl) throw new Error('Compliance control not found');
+      const reason = input.reason.trim();
+      const compensatingControl = input.compensatingControl.trim();
+      if (!reason || !compensatingControl) {
+        throw new Error('Exception reason and compensating control are required.');
+      }
+      const days = Math.max(1, Math.min(180, Number(input.expiresInDays ?? 30)));
+      const now = new Date();
+      const record: ComplianceException = {
+        id: `cexc_${crypto.randomUUID().slice(0, 8)}`,
+        tenantId: tid,
+        controlId: ctrl.id,
+        controlCode: ctrl.code,
+        framework: ctrl.framework,
+        reason,
+        compensatingControl,
+        approvedBy: actor.email,
+        expiresAt: new Date(now.getTime() + days * 86400000).toISOString(),
+        status: 'active',
+        createdAt: now.toISOString(),
+      };
+      this.complianceExceptions.unshift(record);
+      this.recordAuditEvent({
+        tenantId: tid,
+        actorId: actor.id,
+        actorEmail: actor.email,
+        actorRole: actor.role,
+        action: 'compliance.exception_recorded',
+        resourceType: 'compliance_exception',
+        resourceId: record.id,
+        outcome: 'allowed',
+        before: null,
+        after: { controlCode: ctrl.code, framework: ctrl.framework, expiresAt: record.expiresAt },
+        reason,
+      });
+      this.persistState();
+      return record;
+    });
+  }
+
+  revokeComplianceException(
+    tenantId: string,
+    exceptionId: string,
+    actor: { id: string; email: string; role: Role }
+  ): ComplianceException {
+    return this.withTenantContext(tenantId, (tid) => {
+      const idx = this.complianceExceptions.findIndex((c) => c.id === exceptionId && c.tenantId === tid);
+      if (idx === -1) throw new Error('Compliance exception not found');
+      this.complianceExceptions[idx] = { ...this.complianceExceptions[idx], status: 'revoked' };
+      this.recordAuditEvent({
+        tenantId: tid,
+        actorId: actor.id,
+        actorEmail: actor.email,
+        actorRole: actor.role,
+        action: 'compliance.exception_revoked',
+        resourceType: 'compliance_exception',
+        resourceId: exceptionId,
+        outcome: 'allowed',
+        before: { status: 'active' },
+        after: { status: 'revoked' },
+      });
+      this.persistState();
+      return this.complianceExceptions[idx];
+    });
+  }
+
+  exportComplianceCsv(
+    tenantId: string,
+    options: { framework: ComplianceFramework | 'all' },
+    actor: { id: string; email: string; role: Role }
+  ): { filename: string; csvContent: string; rowCount: number; auditEventId: string } {
+    return this.withTenantContext(tenantId, (tid) => {
+      const controls = this.getControlsForTenant(tid).filter(
+        (c) => options.framework === 'all' || c.framework === options.framework
+      );
+      const escapeCsv = (val: string | number) => {
+        const s = String(val ?? '');
+        return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+      };
+      const header = ['Framework', 'Control Code', 'Title', 'Status', 'Evidence Count', 'Open Findings', 'Last Verified'].join(',');
+      const rows = controls.map((c) =>
+        [
+          escapeCsv(c.framework),
+          escapeCsv(c.code),
+          escapeCsv(c.title),
+          escapeCsv(c.status),
+          escapeCsv(c.evidenceCount),
+          escapeCsv(c.mappedFindingIds.length),
+          escapeCsv(c.lastVerified),
+        ].join(',')
+      );
+      const csvContent = [header, ...rows].join('\n');
+      const filename = `eyes-of-agent-${tid}-compliance-${options.framework === 'all' ? 'all' : options.framework.toLowerCase().replace(/\s+/g, '-')}.csv`;
+      const auditEv = this.recordAuditEvent({
+        tenantId: tid,
+        actorId: actor.id,
+        actorEmail: actor.email,
+        actorRole: actor.role,
+        action: 'compliance.csv_exported',
+        resourceType: 'compliance_csv',
+        resourceId: filename,
+        outcome: 'allowed',
+        before: null,
+        after: { framework: options.framework, rowCount: rows.length },
+      });
+      return { filename, csvContent, rowCount: rows.length, auditEventId: auditEv.id };
     });
   }
 }

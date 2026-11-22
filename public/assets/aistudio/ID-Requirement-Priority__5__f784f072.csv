@@ -1,0 +1,7 @@
+"ID","Requirement","Priority"
+"FR-6.1","Build unified risk graph across agents, identities, tools, data","P0"
+"FR-6.2","Generate exposure paths: agent → identity → tool → data → destination","P0"
+"FR-6.3","Score risk using explainable factors","P0"
+"FR-6.4","Prioritize by business and regulatory impact","P0"
+"FR-6.5","Support path states: potential, observed, active, anomalous, remediated","P1"
+"FR-6.6","Recommend remediation for every path","P0"

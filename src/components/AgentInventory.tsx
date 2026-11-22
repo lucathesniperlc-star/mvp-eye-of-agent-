@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
-import { Plus, Search, X } from 'lucide-react';
-import type { Agent, AgentType, DataSource, RiskLevel } from '../types/security';
+import { CheckCircle2, Plus, Search, ShieldAlert, X } from 'lucide-react';
+import type { Agent, AgentLifecycleState, AgentType, DataSource, RiskLevel } from '../types/security';
 import { filterAgents } from '../utils/riskEngine';
 import { RiskLabel } from './RiskIndicator';
 
@@ -21,7 +21,29 @@ interface AgentInventoryProps {
     permissions?: string[];
     dataSources?: string[];
   }) => Promise<Agent | null>;
+  onReviewAgentLifecycle?: (
+    agentId: string,
+    payload: {
+      action: 'verify' | 'sanction' | 'unsanction' | 'retire';
+      owner?: string;
+      ownerTeam?: string;
+      reason?: string;
+    }
+  ) => Promise<Agent | null>;
   onSelectAgent: (agentId: string) => void;
+}
+
+function lifecycleBadge(state?: AgentLifecycleState): { label: string; cls: string } {
+  switch (state) {
+    case 'sanctioned':
+      return { label: 'sanctioned', cls: 'border-emerald-500/40 bg-emerald-500/10 text-emerald-300' };
+    case 'unsanctioned':
+      return { label: 'unsanctioned', cls: 'border-rose-500/40 bg-rose-500/10 text-rose-300' };
+    case 'retired':
+      return { label: 'retired', cls: 'border-white/15 bg-white/[0.04] text-slate-400' };
+    default:
+      return { label: 'discovered', cls: 'border-amber-500/40 bg-amber-500/10 text-amber-300' };
+  }
 }
 
 export const AgentInventory: React.FC<AgentInventoryProps> = ({
@@ -31,11 +53,14 @@ export const AgentInventory: React.FC<AgentInventoryProps> = ({
   dataSources,
   canManageAgents = true,
   onCreateAgent,
+  onReviewAgentLifecycle,
   onSelectAgent,
 }) => {
   const [query, setQuery] = useState('');
   const [riskFilter, setRiskFilter] = useState<RiskLevel | 'all'>('all');
   const [typeFilter, setTypeFilter] = useState<AgentType | 'all'>('all');
+  const [reviewQueueOnly, setReviewQueueOnly] = useState(false);
+  const [reviewBusyId, setReviewBusyId] = useState<string | null>(null);
 
   const [createOpen, setCreateOpen] = useState(false);
   const [newName, setNewName] = useState('');
@@ -50,16 +75,46 @@ export const AgentInventory: React.FC<AgentInventoryProps> = ({
   const [createError, setCreateError] = useState('');
   const [createNotice, setCreateNotice] = useState('');
 
-  const filtered = filterAgents(agents, tenantId, {
+  const tenantAll = agents.filter((a) => a.tenantId === tenantId);
+  const reviewQueueCount = tenantAll.filter(
+    (a) => (a.lifecycleState ?? 'discovered') === 'discovered' || (a.confidenceScore ?? 100) < 85
+  ).length;
+
+  const baseFiltered = filterAgents(agents, tenantId, {
     query,
     risk: riskFilter,
     type: typeFilter,
   });
+  const filtered = reviewQueueOnly
+    ? baseFiltered.filter(
+        (a) => (a.lifecycleState ?? 'discovered') === 'discovered' || (a.confidenceScore ?? 100) < 85
+      )
+    : baseFiltered;
 
   const resetFilters = () => {
     setQuery('');
     setRiskFilter('all');
     setTypeFilter('all');
+    setReviewQueueOnly(false);
+  };
+
+  const handleLifecycleAction = async (
+    agent: Agent,
+    action: 'verify' | 'sanction' | 'unsanction' | 'retire'
+  ) => {
+    if (!onReviewAgentLifecycle) return;
+    setReviewBusyId(agent.id);
+    setCreateNotice('');
+    try {
+      const updated = await onReviewAgentLifecycle(agent.id, { action });
+      if (updated) {
+        setCreateNotice(
+          `Updated ${updated.name}: lifecycle=${updated.lifecycleState}, confidence=${updated.confidenceScore}%, status=${updated.status}.`
+        );
+      }
+    } finally {
+      setReviewBusyId(null);
+    }
   };
 
   const handleCreateSubmit = async (e: React.FormEvent) => {
@@ -114,7 +169,7 @@ export const AgentInventory: React.FC<AgentInventoryProps> = ({
           </h1>
           <p className="mt-1 text-sm text-slate-400">
             Showing {filtered.length} profiled agents out of {totalTenantDiscoveredCount} discovered
-            across cloud and identity telemetry
+            across cloud and identity telemetry · {reviewQueueCount} awaiting confidence review
           </p>
         </div>
 
@@ -358,6 +413,19 @@ export const AgentInventory: React.FC<AgentInventoryProps> = ({
             <option value="Unowned">Unowned</option>
           </select>
         </div>
+
+        <button
+          type="button"
+          onClick={() => setReviewQueueOnly((v) => !v)}
+          className={`inline-flex items-center gap-1.5 rounded-lg border px-3 py-2 text-xs font-medium transition-colors whitespace-nowrap ${
+            reviewQueueOnly
+              ? 'border-amber-500/60 bg-amber-500/15 text-amber-300'
+              : 'border-white/15 bg-[#090B10] text-slate-300 hover:text-white'
+          }`}
+        >
+          <ShieldAlert className="w-3.5 h-3.5" aria-hidden="true" />
+          <span>Confidence review queue ({reviewQueueCount})</span>
+        </button>
       </div>
 
       {/* Inventory Table or Empty State */}
@@ -383,13 +451,13 @@ export const AgentInventory: React.FC<AgentInventoryProps> = ({
             <table className="w-full text-left text-xs">
               <thead>
                 <tr className="border-b border-white/[0.08] bg-[#0D1017] text-slate-400">
-                  <th className="px-4 py-3 font-medium">Agent</th>
+                  <th className="px-4 py-3 font-medium">Agent &amp; Framework</th>
                   <th className="px-4 py-3 font-medium">Owner</th>
-                  <th className="px-4 py-3 font-medium">Type</th>
+                  <th className="px-4 py-3 font-medium">Lifecycle &amp; Confidence</th>
                   <th className="px-4 py-3 font-medium">Risk</th>
                   <th className="px-4 py-3 font-medium">Data access</th>
                   <th className="px-4 py-3 font-medium">Tools &amp; MCP</th>
-                  <th className="px-4 py-3 text-right font-medium">Score</th>
+                  <th className="px-4 py-3 text-right font-medium">Score / Review</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-white/[0.06]">
@@ -398,6 +466,10 @@ export const AgentInventory: React.FC<AgentInventoryProps> = ({
                     .filter((ds) => agent.dataSources.includes(ds.id))
                     .map((ds) => ds.name)
                     .join(', ');
+                  const badge = lifecycleBadge(agent.lifecycleState);
+                  const conf = agent.confidenceScore ?? 92;
+                  const needsReview =
+                    (agent.lifecycleState ?? 'discovered') === 'discovered' || conf < 85;
                   return (
                     <tr
                       key={agent.id}
@@ -414,13 +486,23 @@ export const AgentInventory: React.FC<AgentInventoryProps> = ({
                         <p className="mt-0.5 font-mono text-[11px] text-slate-400">
                           {agent.identity}
                         </p>
+                        <p className="mt-0.5 font-mono text-[10px] text-slate-500">
+                          {agent.framework ?? 'Custom MCP'} · {agent.environment ?? 'prod'} · {agent.type}
+                        </p>
                       </td>
                       <td className="px-4 py-3.5 text-slate-300">
                         <div>{agent.ownerTeam}</div>
                         <div className="text-[11px] text-slate-400">{agent.owner}</div>
                       </td>
-                      <td className="px-4 py-3.5 text-slate-300 whitespace-nowrap">
-                        {agent.type}
+                      <td className="px-4 py-3.5 whitespace-nowrap">
+                        <span
+                          className={`inline-block rounded border px-2 py-0.5 font-mono text-[11px] ${badge.cls}`}
+                        >
+                          {badge.label}
+                        </span>
+                        <p className="mt-1 font-mono text-[11px] text-slate-400 tabular-nums">
+                          {conf}% confidence
+                        </p>
                       </td>
                       <td className="px-4 py-3.5">
                         <RiskLabel level={agent.riskLevel} />
@@ -431,8 +513,36 @@ export const AgentInventory: React.FC<AgentInventoryProps> = ({
                       <td className="px-4 py-3.5 font-mono text-[11px] text-slate-300">
                         {agent.tools.join(', ')}
                       </td>
-                      <td className="px-4 py-3.5 text-right font-mono font-semibold text-white tabular-nums">
-                        {agent.riskScore}
+                      <td className="px-4 py-3.5 text-right whitespace-nowrap">
+                        <div className="font-mono font-semibold text-white tabular-nums">
+                          {agent.riskScore}
+                        </div>
+                        {onReviewAgentLifecycle && canManageAgents && (
+                          <div className="mt-1.5 flex items-center justify-end gap-1.5">
+                            {needsReview || agent.lifecycleState !== 'sanctioned' ? (
+                              <button
+                                type="button"
+                                disabled={reviewBusyId === agent.id}
+                                aria-label={`Confirm & Sanction ${agent.name}`}
+                                onClick={() => handleLifecycleAction(agent, 'sanction')}
+                                className="inline-flex items-center gap-1 rounded border border-emerald-500/40 bg-emerald-500/10 px-2 py-0.5 text-[11px] font-medium text-emerald-300 hover:bg-emerald-500/20 disabled:opacity-50"
+                              >
+                                <CheckCircle2 className="w-3 h-3" aria-hidden="true" />
+                                <span>Sanction</span>
+                              </button>
+                            ) : (
+                              <button
+                                type="button"
+                                disabled={reviewBusyId === agent.id}
+                                aria-label={`Mark Unsanctioned ${agent.name}`}
+                                onClick={() => handleLifecycleAction(agent, 'unsanction')}
+                                className="rounded border border-amber-500/40 bg-amber-500/10 px-2 py-0.5 text-[11px] font-medium text-amber-300 hover:bg-amber-500/20 disabled:opacity-50"
+                              >
+                                Unsanction
+                              </button>
+                            )}
+                          </div>
+                        )}
                       </td>
                     </tr>
                   );

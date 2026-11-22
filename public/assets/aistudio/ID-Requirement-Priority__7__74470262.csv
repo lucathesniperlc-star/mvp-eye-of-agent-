@@ -1,0 +1,7 @@
+"ID","Requirement","Priority"
+"FR-8.1","Define policies for agents, users, models, tools, data classes","P0"
+"FR-8.2","Support approved-model, tool, MCP, and region registries","P0"
+"FR-8.3","Support least-privilege and data-minimization policies","P0"
+"FR-8.4","Support human-approval workflows","P1"
+"FR-8.5","Support policy simulation before enforcement","P1"
+"FR-8.6","Support exceptions with approval and expiry","P1"

@@ -1,0 +1,7 @@
+"Risk","Mitigation"
+"Category crowding","Focus on agent-centric, data-exposure, compliance wedge"
+"Platform risk","Build vendor-neutral, cross-platform value"
+"Long enterprise sales cycle","Start with mid-market and design partners"
+"Data sensitivity","Privacy-first architecture, no raw prompt retention"
+"Runtime complexity","Start with observe mode, then enforce"
+"False positives","High-confidence rules, human review, feedback loop"

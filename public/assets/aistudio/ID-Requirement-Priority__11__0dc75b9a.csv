@@ -1,0 +1,8 @@
+"ID","Requirement","Priority"
+"FR-12.1","Maintain control library for SOC 2, ISO 27001, GDPR, NIST AI RMF","P0"
+"FR-12.2","Map findings to controls and frameworks","P0"
+"FR-12.3","Collect and retain immutable evidence","P0"
+"FR-12.4","Calculate control status and compliance score","P0"
+"FR-12.5","Manage exceptions and risk acceptance","P1"
+"FR-12.6","Generate audit-ready PDF, CSV, JSON, API exports","P0"
+"FR-12.7","Provide role-based dashboards","P0"

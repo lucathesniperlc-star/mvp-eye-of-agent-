@@ -1,0 +1,8 @@
+"ID","Requirement","Priority"
+"FR-3.1","Discover agent identities, service principals, managed identities, OAuth apps","P0"
+"FR-3.2","Discover API keys, tokens, certificates, and secrets","P0"
+"FR-3.3","Normalize permissions into canonical actions","P0"
+"FR-3.4","Calculate effective permissions across inheritance and delegation","P0"
+"FR-3.5","Detect over-permission, unused access, shared identity, exposed secrets","P0"
+"FR-3.6","Build identity, role, resource, and data-source graph","P0"
+"FR-3.7","Detect permission changes continuously","P0"

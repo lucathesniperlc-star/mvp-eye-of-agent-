@@ -1,0 +1,8 @@
+"ID","Requirement","Priority"
+"FR-4.1","Discover models, endpoints, providers, and regions","P0"
+"FR-4.2","Discover tools, APIs, plugins, functions, and webhooks","P0"
+"FR-4.3","Discover MCP servers and MCP tools","P0"
+"FR-4.4","Build agent-to-capability graph","P0"
+"FR-4.5","Classify capabilities by sensitivity, action, and external access","P0"
+"FR-4.6","Track approval status, owner, version, and environment","P0"
+"FR-4.7","Correlate configured vs. observed usage","P1"

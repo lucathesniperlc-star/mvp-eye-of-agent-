@@ -34,6 +34,15 @@ interface AgentDetailProps {
       businessService?: string;
     }
   ) => Promise<Agent | null>;
+  onReviewAgentLifecycle?: (
+    agentId: string,
+    payload: {
+      action: 'verify' | 'sanction' | 'unsanction' | 'retire';
+      owner?: string;
+      ownerTeam?: string;
+      reason?: string;
+    }
+  ) => Promise<Agent | null>;
   onBack: () => void;
   onViewExposurePath: (agentId: string) => void;
   onOpenFindings: () => void;
@@ -47,6 +56,7 @@ export const AgentDetail: React.FC<AgentDetailProps> = ({
   findings,
   canManageAgents = true,
   onUpdateAgentGovernance,
+  onReviewAgentLifecycle,
   onBack,
   onViewExposurePath,
   onOpenFindings,
@@ -70,6 +80,30 @@ export const AgentDetail: React.FC<AgentDetailProps> = ({
   const usedModels = models.filter((m) => agent.models.includes(m.id));
   const reachableData = dataSources.filter((d) => agent.dataSources.includes(d.id));
   const agentFindings = findings.filter((f) => f.agentId === agent.id);
+
+  const handleLifecycle = async (action: 'verify' | 'sanction' | 'unsanction' | 'retire') => {
+    if (!onReviewAgentLifecycle) return;
+    setSaving(true);
+    setGovNotice('');
+    setGovError('');
+    try {
+      const updated = await onReviewAgentLifecycle(agent.id, {
+        action,
+        owner: ownerInput,
+        ownerTeam: ownerTeamInput,
+      });
+      if (updated) {
+        setStatusInput(updated.status);
+        setGovNotice(
+          `Lifecycle updated to ${updated.lifecycleState} (confidence ${updated.confidenceScore}%, risk score ${updated.riskScore}).`
+        );
+      }
+    } catch (err) {
+      setGovError((err as Error).message || 'Unable to update lifecycle.');
+    } finally {
+      setSaving(false);
+    }
+  };
 
   const applyGovernanceUpdate = async (overrides?: { status?: AgentStatus }) => {
     if (!onUpdateAgentGovernance) return;
@@ -114,7 +148,7 @@ export const AgentDetail: React.FC<AgentDetailProps> = ({
               {agent.name}
             </h1>
             <p className="text-xs text-slate-400">
-              {agent.type} · Owner: {agent.owner} ({agent.ownerTeam}) · Last seen {agent.lastSeen}
+              {agent.type} · Framework: {agent.framework ?? 'Custom MCP'} · Env: {agent.environment ?? 'prod'} · Lifecycle: {agent.lifecycleState ?? 'discovered'} ({agent.confidenceScore ?? 92}% confidence)
             </p>
           </div>
         </div>
@@ -155,7 +189,7 @@ export const AgentDetail: React.FC<AgentDetailProps> = ({
           </p>
         </div>
         <div>
-          <p className="text-xs text-slate-400">Runtime status</p>
+          <p className="text-xs text-slate-400">Lifecycle &amp; status</p>
           <p
             className={`mt-1.5 font-mono text-sm font-medium capitalize ${
               agent.status === 'active'
@@ -165,10 +199,10 @@ export const AgentDetail: React.FC<AgentDetailProps> = ({
                   : 'text-rose-400'
             }`}
           >
-            {agent.status}
+            {agent.status} · {agent.lifecycleState ?? 'discovered'}
           </p>
-          <p className="text-[11px] text-slate-400">
-            {agentFindings.length} associated finding{agentFindings.length === 1 ? '' : 's'}
+          <p className="text-[11px] text-slate-400 font-mono tabular-nums">
+            Confidence {agent.confidenceScore ?? 92}% · {agentFindings.length} finding(s)
           </p>
         </div>
       </div>
@@ -180,10 +214,38 @@ export const AgentDetail: React.FC<AgentDetailProps> = ({
             <div className="flex items-center gap-2">
               <ShieldCheck className="w-4 h-4 text-sky-400" aria-hidden="true" />
               <h2 className="font-display text-sm font-semibold text-white">
-                Governance, ownership &amp; containment
+                Governance, lifecycle review &amp; containment
               </h2>
             </div>
             <div className="flex flex-wrap items-center gap-2">
+              {onReviewAgentLifecycle && (
+                <>
+                  <button
+                    type="button"
+                    disabled={!canManageAgents || saving}
+                    onClick={() => handleLifecycle('sanction')}
+                    className="rounded-lg border border-emerald-500/40 bg-emerald-500/10 px-3 py-1.5 text-xs font-medium text-emerald-300 hover:bg-emerald-500/20 disabled:opacity-40 whitespace-nowrap"
+                  >
+                    Confirm &amp; Sanction
+                  </button>
+                  <button
+                    type="button"
+                    disabled={!canManageAgents || saving}
+                    onClick={() => handleLifecycle('unsanction')}
+                    className="rounded-lg border border-amber-500/40 bg-amber-500/10 px-3 py-1.5 text-xs font-medium text-amber-300 hover:bg-amber-500/20 disabled:opacity-40 whitespace-nowrap"
+                  >
+                    Mark Unsanctioned
+                  </button>
+                  <button
+                    type="button"
+                    disabled={!canManageAgents || saving}
+                    onClick={() => handleLifecycle('retire')}
+                    className="rounded-lg border border-white/15 bg-[#090B10] px-3 py-1.5 text-xs font-medium text-slate-300 hover:text-white disabled:opacity-40 whitespace-nowrap"
+                  >
+                    Retire
+                  </button>
+                </>
+              )}
               <button
                 type="button"
                 disabled={!canManageAgents || saving || agent.status === 'restricted'}

@@ -14,9 +14,12 @@ import type {
   ControlItem,
   DataSource,
   Finding,
+  PersonaLensId,
   RiskTrendPoint,
   ScreenId,
   Tenant,
+  VerticalPackId,
+  VerticalPolicyPack,
 } from '../types/security';
 import { computeComplianceCoverage, type DashboardMetrics } from '../utils/riskEngine';
 import { RiskLabel } from './RiskIndicator';
@@ -30,9 +33,62 @@ interface RiskCommandCenterProps {
   dataSources: DataSource[];
   activity: ActivityEvent[];
   trendSeries: RiskTrendPoint[];
+  activeVerticalPacks?: VerticalPackId[];
+  verticalPacksCatalog?: VerticalPolicyPack[];
   onSelectAgent: (agentId: string) => void;
   onNavigate: (screen: ScreenId) => void;
 }
+
+const PERSONA_LENSES: Array<{
+  id: PersonaLensId;
+  label: string;
+  focusLine: string;
+  ctaScreen: ScreenId;
+  ctaLabel: string;
+}> = [
+  {
+    id: 'ciso',
+    label: 'CISO',
+    focusLine: 'Board-level cyber-risk posture, shadow AI reduction & regulatory exposure',
+    ctaScreen: 'exposure',
+    ctaLabel: 'Inspect exposure graph →',
+  },
+  {
+    id: 'analyst',
+    label: 'Security Analyst',
+    focusLine: 'Triage blast-radius paths, review low-confidence agents & contain incidents',
+    ctaScreen: 'findings',
+    ctaLabel: 'Open findings & incidents →',
+  },
+  {
+    id: 'ai_owner',
+    label: 'AI Platform Owner',
+    focusLine: 'Sanction discovered agents, verify approved models & govern MCP tool scopes',
+    ctaScreen: 'inventory',
+    ctaLabel: 'Review agent queue →',
+  },
+  {
+    id: 'compliance',
+    label: 'Compliance Lead',
+    focusLine: 'Close SOC 2 / ISO 42001 / EU AI Act control gaps & manage exceptions',
+    ctaScreen: 'compliance',
+    ctaLabel: 'Open evidence vault →',
+  },
+  {
+    id: 'auditor',
+    label: 'External Auditor',
+    focusLine: 'Verify SHA-256 hash-chained evidence & export read-only audit packages',
+    ctaScreen: 'compliance',
+    ctaLabel: 'Export audit pack →',
+  },
+  {
+    id: 'mssp',
+    label: 'MSSP Operator',
+    focusLine: 'Cross-tenant posture oversight, vertical pack rollouts & SLA tracking',
+    ctaScreen: 'policy',
+    ctaLabel: 'Manage vertical packs →',
+  },
+];
 
 export const RiskCommandCenter: React.FC<RiskCommandCenterProps> = ({
   tenant,
@@ -43,10 +99,18 @@ export const RiskCommandCenter: React.FC<RiskCommandCenterProps> = ({
   dataSources,
   activity,
   trendSeries,
+  activeVerticalPacks = [],
+  verticalPacksCatalog = [],
   onSelectAgent,
   onNavigate,
 }) => {
   const [hoveredIdx, setHoveredIdx] = useState<number>(trendSeries.length - 1);
+  const [personaLens, setPersonaLens] = useState<PersonaLensId>('ciso');
+
+  const activeLens = PERSONA_LENSES.find((p) => p.id === personaLens) ?? PERSONA_LENSES[0];
+  const installedPackDetails = verticalPacksCatalog.filter((p) =>
+    activeVerticalPacks.includes(p.id)
+  );
 
   const tenantAgents = agents.filter((a) => a.tenantId === tenant.id);
   const topRisks = [...tenantAgents]
@@ -98,7 +162,7 @@ export const RiskCommandCenter: React.FC<RiskCommandCenterProps> = ({
             Risk Command Center
           </h1>
           <p className="mt-1 text-sm text-slate-400">
-            Executive posture for {tenant.name} · {tenant.industry}
+            {activeLens.label} lens for {tenant.name} ({tenant.industry}) — {activeLens.focusLine}
           </p>
         </div>
         <div className="flex items-center gap-3 text-xs text-slate-400">
@@ -106,11 +170,81 @@ export const RiskCommandCenter: React.FC<RiskCommandCenterProps> = ({
           <span aria-hidden="true">·</span>
           <button
             type="button"
-            onClick={() => onNavigate('exposure')}
+            onClick={() => onNavigate(activeLens.ctaScreen)}
             className="font-medium text-sky-400 hover:text-sky-300"
           >
-            Inspect exposure graph →
+            {activeLens.ctaLabel}
           </button>
+        </div>
+      </div>
+
+      {/* Persona Lens Switcher + Target Performance SLAs & Active Vertical Packs */}
+      <div className="rounded-xl border border-white/[0.08] bg-[#11151D] p-4 space-y-3">
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div className="flex flex-wrap items-center gap-1.5" role="group" aria-label="Persona view switcher">
+            <span className="mr-1 text-[11px] font-medium text-slate-400">Persona view:</span>
+            {PERSONA_LENSES.map((lens) => (
+              <button
+                key={lens.id}
+                type="button"
+                onClick={() => setPersonaLens(lens.id)}
+                className={`rounded-md px-2.5 py-1 text-xs font-medium transition-colors whitespace-nowrap ${
+                  personaLens === lens.id
+                    ? 'bg-sky-500 text-slate-950 font-semibold'
+                    : 'border border-white/10 bg-[#090B10] text-slate-300 hover:text-white'
+                }`}
+              >
+                {lens.label}
+              </button>
+            ))}
+          </div>
+
+          <div className="flex flex-wrap items-center gap-2 text-[11px]">
+            <span className="text-slate-400">Active vertical packs:</span>
+            {installedPackDetails.length > 0 ? (
+              installedPackDetails.map((pk) => (
+                <button
+                  key={pk.id}
+                  type="button"
+                  onClick={() => onNavigate('policy')}
+                  className="rounded border border-emerald-500/30 bg-emerald-500/10 px-2 py-0.5 font-mono text-emerald-300 hover:bg-emerald-500/20"
+                >
+                  {pk.name}
+                </button>
+              ))
+            ) : (
+              <button
+                type="button"
+                onClick={() => onNavigate('policy')}
+                className="font-mono text-slate-400 hover:text-sky-400"
+              >
+                None installed (Configure →)
+              </button>
+            )}
+          </div>
+        </div>
+
+        <div className="flex flex-wrap items-center justify-between gap-x-5 gap-y-1.5 border-t border-white/[0.06] pt-3 font-mono text-[11px] tabular-nums">
+          <div className="whitespace-nowrap text-slate-300">
+            <span className="text-slate-500">IdP Connect:</span>{' '}
+            <span className="text-emerald-400">&lt;15m SLA</span>
+          </div>
+          <div className="whitespace-nowrap text-slate-300">
+            <span className="text-slate-500">Full Inventory:</span>{' '}
+            <span className="text-emerald-400">&lt;24h SLA</span>
+          </div>
+          <div className="whitespace-nowrap text-slate-300">
+            <span className="text-slate-500">Exposure Report:</span>{' '}
+            <span className="text-emerald-400">&lt;48h SLA</span>
+          </div>
+          <div className="whitespace-nowrap text-slate-300">
+            <span className="text-slate-500">Audit Pack:</span>{' '}
+            <span className="text-emerald-400">&lt;5m SLA</span>
+          </div>
+          <div className="whitespace-nowrap text-slate-300">
+            <span className="text-slate-500">Privacy:</span>{' '}
+            <span className="text-sky-400">Zero Raw Prompt Retention</span>
+          </div>
         </div>
       </div>
 

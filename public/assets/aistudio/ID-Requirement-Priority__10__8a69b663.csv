@@ -1,0 +1,7 @@
+"ID","Requirement","Priority"
+"FR-11.1","Recommend remediation for findings and incidents","P1"
+"FR-11.2","Simulate impact before execution","P1"
+"FR-11.3","Require approval based on risk and blast radius","P1"
+"FR-11.4","Execute narrowly scoped, idempotent changes","P2"
+"FR-11.5","Verify remediation through rescans","P1"
+"FR-11.6","Support rollback where possible","P2"
