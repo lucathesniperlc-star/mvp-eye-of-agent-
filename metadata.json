@@ -1,0 +1,6 @@
+{
+  "name": "Eyes of Agent",
+  "description": "The control plane for AI-driven cyber risk. Discover every AI agent, map identity and data exposure paths, and govern actions with audit-ready evidence.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
