@@ -9,6 +9,7 @@ import {
   KeyRound,
   Layers,
   LayoutDashboard,
+  Mail,
   Menu,
   Plug,
   ShieldAlert,
@@ -179,14 +180,26 @@ export const DashboardShell: React.FC<DashboardShellProps> = ({
           </div>
         )}
 
-        <div className="rounded-lg border border-white/[0.08] bg-[#11151D] p-3">
-          <div className="flex items-center gap-2 text-xs font-medium text-slate-200">
-            <Activity className="w-3.5 h-3.5 text-emerald-400 shrink-0" aria-hidden="true" />
-            <span>Zero prompt retention</span>
+        <div className="rounded-lg border border-white/[0.08] bg-[#11151D] p-3 space-y-2">
+          <div>
+            <div className="flex items-center gap-2 text-xs font-medium text-slate-200">
+              <Activity className="w-3.5 h-3.5 text-emerald-400 shrink-0" aria-hidden="true" />
+              <span>Zero prompt retention</span>
+            </div>
+            <p className="mt-1 text-[11px] text-slate-400">
+              {currentTenant.domain} · Row-level isolated
+            </p>
           </div>
-          <p className="mt-1 text-[11px] text-slate-400">
-            {currentTenant.domain} · Row-level isolated
-          </p>
+          <div className="border-t border-white/[0.06] pt-2">
+            <a
+              href="mailto:lucathesniperlc@gmail.com"
+              className="flex items-center gap-1.5 text-[11px] text-sky-400 hover:text-sky-300 truncate"
+              title="lucathesniperlc@gmail.com"
+            >
+              <Mail className="w-3 h-3 shrink-0" aria-hidden="true" />
+              <span className="truncate">lucathesniperlc@gmail.com</span>
+            </a>
+          </div>
         </div>
 
         <button

@@ -6,6 +6,7 @@ import {
   Eye,
   KeyRound,
   Lock,
+  Mail,
   Server,
   Shield,
   ShieldCheck,
@@ -121,45 +122,52 @@ export const LandingPage: React.FC<LandingPageProps> = ({ onLaunchDemo }) => {
     <div className="min-h-screen bg-[#090B10] text-slate-100">
       {/* Top Bar Contract: 3 zones separated by gap-8 */}
       <header className="sticky top-0 z-40 border-b border-white/[0.08] bg-[#090B10]/95 backdrop-blur-md">
-        <div className="mx-auto flex max-w-7xl items-center justify-between gap-8 px-6 py-4">
+        <div className="mx-auto flex max-w-7xl flex-wrap items-center justify-between gap-x-8 gap-y-2 px-6 py-4">
           <a
             href="#top"
-            className="font-display text-lg font-semibold tracking-tight text-white whitespace-nowrap shrink-0"
+            className="order-1 font-display text-lg font-semibold tracking-tight text-white whitespace-nowrap shrink-0"
           >
             Eyes of Agent
           </a>
 
           <nav
             aria-label="Primary navigation"
-            className="hidden md:flex items-center gap-7 text-sm font-medium text-slate-400"
+            className="order-3 flex w-full flex-wrap items-center gap-x-6 gap-y-1 text-sm font-medium text-slate-400 md:order-2 md:w-auto md:justify-center"
           >
             <a
               href="#problem"
-              className="hover:text-white transition-colors whitespace-nowrap shrink-0"
+              className="hidden lg:inline hover:text-white transition-colors whitespace-nowrap shrink-0"
             >
               Problem
             </a>
             <a
               href="#capabilities"
-              className="hover:text-white transition-colors whitespace-nowrap shrink-0"
+              className="hidden lg:inline hover:text-white transition-colors whitespace-nowrap shrink-0"
             >
               Capabilities
             </a>
             <a
               href="#how-it-works"
-              className="hover:text-white transition-colors whitespace-nowrap shrink-0"
+              className="hidden lg:inline hover:text-white transition-colors whitespace-nowrap shrink-0"
             >
               How it works
             </a>
             <a
               href="#use-cases"
-              className="hover:text-white transition-colors whitespace-nowrap shrink-0"
+              className="hidden lg:inline hover:text-white transition-colors whitespace-nowrap shrink-0"
             >
               Use cases
             </a>
+            <a
+              href="mailto:lucathesniperlc@gmail.com"
+              className="inline-flex items-center gap-1.5 text-xs sm:text-sm text-sky-400 hover:text-sky-300 transition-colors whitespace-nowrap shrink-0"
+            >
+              <Mail className="w-3.5 h-3.5 shrink-0" aria-hidden="true" />
+              <span>lucathesniperlc@gmail.com</span>
+            </a>
           </nav>
 
-          <div className="flex items-center shrink-0">
+          <div className="order-2 flex items-center shrink-0 md:order-3">
             <button
               type="button"
               onClick={() => onLaunchDemo(false)}
@@ -810,9 +818,15 @@ export const LandingPage: React.FC<LandingPageProps> = ({ onLaunchDemo }) => {
       <footer className="border-t border-white/[0.08] py-8">
         <div className="mx-auto flex max-w-7xl flex-col items-center justify-between gap-4 px-6 text-xs text-slate-500 sm:flex-row">
           <span>Eyes of Agent · AI Risk &amp; Governance Control Plane</span>
-          <div className="flex items-center gap-6">
+          <div className="flex flex-wrap items-center justify-center gap-6">
             <span>SOC 2-ready architecture</span>
             <span>No raw prompt retention</span>
+            <a
+              href="mailto:lucathesniperlc@gmail.com"
+              className="text-sky-400 hover:text-sky-300 transition-colors"
+            >
+              Contact: lucathesniperlc@gmail.com
+            </a>
           </div>
         </div>
       </footer>
@@ -832,7 +846,13 @@ export const LandingPage: React.FC<LandingPageProps> = ({ onLaunchDemo }) => {
                   Request a security architecture briefing
                 </h2>
                 <p className="mt-1 text-xs text-slate-400">
-                  15-minute read-only assessment of your Entra ID, AWS, and MCP surface.
+                  15-minute read-only assessment of your Entra ID, AWS, and MCP surface. Direct contact:{' '}
+                  <a
+                    href="mailto:lucathesniperlc@gmail.com"
+                    className="text-sky-400 hover:text-sky-300 underline-offset-2 hover:underline"
+                  >
+                    lucathesniperlc@gmail.com
+                  </a>
                 </p>
               </div>
               <button
