@@ -19,6 +19,10 @@ interface ComplianceViewProps {
     fromDate?: string;
     toDate?: string;
   }) => Promise<ComplianceExportResponse | null>;
+  onAttestControl?: (
+    controlId: string,
+    payload: { title?: string; summary: string; source?: string }
+  ) => Promise<{ control: ControlItem; evidenceRecord: EvidenceRecord } | null>;
 }
 
 const FRAMEWORKS: Array<'all' | ComplianceFramework> = [
@@ -36,11 +40,18 @@ export const ComplianceView: React.FC<ComplianceViewProps> = ({
   evidence,
   evidenceRecords = [],
   onExportAuditPack,
+  onAttestControl,
 }) => {
   const [frameworkFilter, setFrameworkFilter] = useState<'all' | ComplianceFramework>('all');
   const [fromDate, setFromDate] = useState<string>('');
   const [toDate, setToDate] = useState<string>('');
   const [exportBusy, setExportBusy] = useState(false);
+  const [attestingControlId, setAttestingControlId] = useState<string | null>(null);
+  const [attestSummary, setAttestSummary] = useState<string>('');
+  const [attestSource, setAttestSource] = useState<string>('Compliance Attestation Review');
+  const [attestBusy, setAttestBusy] = useState(false);
+  const [attestError, setAttestError] = useState<string>('');
+  const [attestNotice, setAttestNotice] = useState<string>('');
   const [exportSummary, setExportSummary] = useState<{
     packageId: string;
     controlsCount: number;
@@ -116,6 +127,35 @@ export const ComplianceView: React.FC<ComplianceViewProps> = ({
       URL.revokeObjectURL(url);
     } finally {
       setExportBusy(false);
+    }
+  };
+
+  const handleSubmitAttestation = async (e: React.FormEvent, control: ControlItem) => {
+    e.preventDefault();
+    if (!onAttestControl) return;
+    if (!attestSummary.trim()) {
+      setAttestError('Attestation summary and evidence reference are required.');
+      return;
+    }
+    setAttestBusy(true);
+    setAttestError('');
+    try {
+      const result = await onAttestControl(control.id, {
+        title: `${control.code} attestation · ${control.title}`,
+        summary: attestSummary.trim(),
+        source: attestSource.trim() || 'Compliance Attestation Review',
+      });
+      if (result) {
+        setAttestNotice(
+          `Attested ${result.control.code} (${result.control.status}) · Hash-chained evidence ${result.evidenceRecord.id} recorded.`
+        );
+        setAttestingControlId(null);
+        setAttestSummary('');
+      }
+    } catch (err) {
+      setAttestError((err as Error).message || 'Unable to attest control.');
+    } finally {
+      setAttestBusy(false);
     }
   };
 
@@ -214,6 +254,16 @@ export const ComplianceView: React.FC<ComplianceViewProps> = ({
         </div>
       )}
 
+      {attestNotice && (
+        <div
+          role="status"
+          className="flex items-center gap-2 rounded-lg border border-sky-500/30 bg-sky-500/10 px-4 py-3 text-xs text-sky-200"
+        >
+          <CheckCircle2 className="w-4 h-4 text-sky-400 shrink-0" aria-hidden="true" />
+          <span>{attestNotice}</span>
+        </div>
+      )}
+
       {/* Summary Strip */}
       <div className="grid grid-cols-2 gap-4 sm:grid-cols-4">
         <div className="rounded-xl border border-white/[0.08] bg-[#11151D] p-5">
@@ -261,42 +311,142 @@ export const ComplianceView: React.FC<ComplianceViewProps> = ({
                 </tr>
               </thead>
               <tbody className="divide-y divide-white/[0.06]">
-                {visibleControls.map((ctrl) => (
-                  <tr key={ctrl.id} className="hover:bg-white/[0.03]">
-                    <td className="px-3.5 py-3.5 whitespace-nowrap align-top">
-                      <span className="font-mono font-semibold text-white">{ctrl.code}</span>
-                      <p className="text-[11px] text-slate-400">{ctrl.framework}</p>
-                    </td>
-                    <td className="px-3.5 py-3.5 text-slate-300">
-                      <p>{ctrl.title}</p>
-                      {ctrl.requiredEvidenceTypes && ctrl.requiredEvidenceTypes.length > 0 && (
-                        <p className="mt-1 font-mono text-[10px] text-slate-500">
-                          {ctrl.requiredEvidenceTypes.join(' · ')}
-                        </p>
+                {visibleControls.map((ctrl) => {
+                  const isAttesting = attestingControlId === ctrl.id;
+                  return (
+                    <React.Fragment key={ctrl.id}>
+                      <tr className="hover:bg-white/[0.03]">
+                        <td className="px-3.5 py-3.5 whitespace-nowrap align-top">
+                          <span className="font-mono font-semibold text-white">{ctrl.code}</span>
+                          <p className="text-[11px] text-slate-400">{ctrl.framework}</p>
+                        </td>
+                        <td className="px-3.5 py-3.5 text-slate-300">
+                          <p>{ctrl.title}</p>
+                          {ctrl.requiredEvidenceTypes && ctrl.requiredEvidenceTypes.length > 0 && (
+                            <p className="mt-1 font-mono text-[10px] text-slate-500">
+                              {ctrl.requiredEvidenceTypes.join(' · ')}
+                            </p>
+                          )}
+                          {ctrl.mappedFindingIds.length > 0 && (
+                            <p className="mt-1 text-[11px] text-rose-400">
+                              {ctrl.mappedFindingIds.length} open finding(s) causing control gap
+                            </p>
+                          )}
+                        </td>
+                        <td className="px-3.5 py-3.5 whitespace-nowrap align-top">
+                          <div className="flex flex-col items-start gap-1.5">
+                            {ctrl.status === 'covered' ? (
+                              <span className="font-medium text-emerald-400">Covered</span>
+                            ) : ctrl.status === 'partial' ? (
+                              <span className="font-medium text-amber-400">Partial</span>
+                            ) : (
+                              <span className="inline-flex items-center gap-1 font-medium text-rose-400">
+                                <ShieldAlert className="w-3.5 h-3.5" aria-hidden="true" />
+                                <span>Gap</span>
+                              </span>
+                            )}
+                            {(ctrl.status === 'partial' || ctrl.status === 'gap') &&
+                              onAttestControl && (
+                                <button
+                                  type="button"
+                                  aria-label={`Attest ${ctrl.code}`}
+                                  onClick={() => {
+                                    setAttestError('');
+                                    setAttestingControlId(isAttesting ? null : ctrl.id);
+                                    setAttestSummary('');
+                                  }}
+                                  className="rounded border border-sky-500/40 bg-sky-500/15 px-2 py-0.5 text-[11px] font-medium text-sky-300 hover:bg-sky-500/25 whitespace-nowrap"
+                                >
+                                  {isAttesting ? 'Close' : 'Attest'}
+                                </button>
+                              )}
+                          </div>
+                        </td>
+                        <td className="px-3.5 py-3.5 text-right font-mono text-slate-300 tabular-nums align-top">
+                          {ctrl.evidenceCount}
+                        </td>
+                      </tr>
+                      {isAttesting && (
+                        <tr className="bg-[#090B10]">
+                          <td colSpan={4} className="px-3.5 py-3.5">
+                            <form
+                              onSubmit={(e) => handleSubmitAttestation(e, ctrl)}
+                              className="space-y-3"
+                            >
+                              <div className="flex flex-wrap items-center justify-between gap-2">
+                                <span className="font-mono text-[11px] font-semibold text-sky-300">
+                                  Attest control {ctrl.code} ({ctrl.framework})
+                                </span>
+                                <span className="text-[11px] text-slate-400">
+                                  Creates SHA-256 chained evidence record
+                                </span>
+                              </div>
+                              <div className="grid grid-cols-1 gap-2.5 sm:grid-cols-12">
+                                <div className="sm:col-span-7">
+                                  <label
+                                    htmlFor={`attest-summary-${ctrl.id}`}
+                                    className="block text-[11px] text-slate-400"
+                                  >
+                                    Attestation summary &amp; proof
+                                  </label>
+                                  <input
+                                    id={`attest-summary-${ctrl.id}`}
+                                    type="text"
+                                    required
+                                    value={attestSummary}
+                                    onChange={(e) => setAttestSummary(e.target.value)}
+                                    placeholder="e.g. Verified IAM scope restriction and gateway enforcement logs"
+                                    className="mt-1 w-full rounded-lg border border-white/15 bg-[#11151D] px-2.5 py-1.5 text-xs text-white focus:border-sky-500 focus:outline-none"
+                                  />
+                                </div>
+                                <div className="sm:col-span-5">
+                                  <label
+                                    htmlFor={`attest-source-${ctrl.id}`}
+                                    className="block text-[11px] text-slate-400"
+                                  >
+                                    Verification source
+                                  </label>
+                                  <input
+                                    id={`attest-source-${ctrl.id}`}
+                                    type="text"
+                                    value={attestSource}
+                                    onChange={(e) => setAttestSource(e.target.value)}
+                                    placeholder="Compliance Attestation Review"
+                                    className="mt-1 w-full rounded-lg border border-white/15 bg-[#11151D] px-2.5 py-1.5 text-xs text-white focus:border-sky-500 focus:outline-none"
+                                  />
+                                </div>
+                              </div>
+                              {attestError && (
+                                <p role="alert" className="text-xs text-rose-400">
+                                  {attestError}
+                                </p>
+                              )}
+                              <div className="flex items-center gap-2">
+                                <button
+                                  type="submit"
+                                  disabled={attestBusy}
+                                  className="rounded-lg bg-sky-500 px-3 py-1.5 text-xs font-semibold text-slate-950 hover:bg-sky-400 disabled:opacity-50"
+                                >
+                                  {attestBusy ? 'Recording...' : 'Submit attestation'}
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    setAttestingControlId(null);
+                                    setAttestError('');
+                                  }}
+                                  className="rounded-lg border border-white/15 bg-[#11151D] px-3 py-1.5 text-xs font-medium text-slate-300 hover:text-white"
+                                >
+                                  Cancel
+                                </button>
+                              </div>
+                            </form>
+                          </td>
+                        </tr>
                       )}
-                      {ctrl.mappedFindingIds.length > 0 && (
-                        <p className="mt-1 text-[11px] text-rose-400">
-                          {ctrl.mappedFindingIds.length} open finding(s) causing control gap
-                        </p>
-                      )}
-                    </td>
-                    <td className="px-3.5 py-3.5 whitespace-nowrap align-top">
-                      {ctrl.status === 'covered' ? (
-                        <span className="font-medium text-emerald-400">Covered</span>
-                      ) : ctrl.status === 'partial' ? (
-                        <span className="font-medium text-amber-400">Partial</span>
-                      ) : (
-                        <span className="inline-flex items-center gap-1 font-medium text-rose-400">
-                          <ShieldAlert className="w-3.5 h-3.5" aria-hidden="true" />
-                          <span>Gap</span>
-                        </span>
-                      )}
-                    </td>
-                    <td className="px-3.5 py-3.5 text-right font-mono text-slate-300 tabular-nums align-top">
-                      {ctrl.evidenceCount}
-                    </td>
-                  </tr>
-                ))}
+                    </React.Fragment>
+                  );
+                })}
               </tbody>
             </table>
           </div>

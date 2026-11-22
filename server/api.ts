@@ -17,6 +17,8 @@ import {
 import { redactSensitiveFields } from './cryptoVault.ts';
 import { store } from './store.ts';
 import type {
+  AgentStatus,
+  AgentType,
   ComplianceFramework,
   EnforcementAction,
   PlaybookId,
@@ -27,6 +29,43 @@ import type {
 export function createApiRouter() {
   const router = express.Router();
   router.use(express.json());
+
+  router.get('/health', (_req, res) => {
+    const persistence = store.getPersistenceInfo();
+    res.json({
+      ok: true,
+      persistenceEnabled: persistence.enabled,
+      uptimeSeconds: Math.round(process.uptime()),
+    });
+  });
+
+  // Public inbound demo / briefing request persistence
+  router.post('/demo-requests', (req, res) => {
+    const body = (req.body ?? {}) as {
+      name?: string;
+      email?: string;
+      company?: string;
+    };
+    try {
+      const request = store.submitDemoRequest({
+        name: body.name ?? '',
+        email: body.email ?? '',
+        company: body.company ?? '',
+      });
+      res.status(201).json({ request });
+    } catch (err) {
+      res.status(400).json({ error: (err as Error).message });
+    }
+  });
+
+  router.get(
+    '/demo-requests',
+    requireAuth,
+    requirePermission('tenant:read'),
+    (_req, res) => {
+      res.json({ requests: store.listDemoRequests() });
+    }
+  );
 
   // Public list of sandbox enterprise SSO personas for demo sign-in
   router.get('/auth/personas', (_req, res) => {
@@ -281,9 +320,11 @@ export function createApiRouter() {
         ? store.getAuditEvents(auth.tenantId)
         : [];
       const enterprise = store.getEnterpriseState(auth.tenantId);
+      const tenants = store.listAuthorizedTenantsForUser(auth.user.id);
 
       res.json({
         ...bundle,
+        tenants,
         graph,
         policy,
         auditEvents,
@@ -550,6 +591,145 @@ export function createApiRouter() {
           role: auth.role,
         });
         res.json({ rule });
+      } catch (err) {
+        res.status(404).json({ error: (err as Error).message });
+      }
+    }
+  );
+
+  router.post(
+    '/policy/rules',
+    requireAuth,
+    requirePermission('policies:manage'),
+    (req: AuthenticatedRequest, res) => {
+      const auth = req.auth!;
+      const body = (req.body ?? {}) as {
+        name?: string;
+        scope?: string;
+        action?: 'allow' | 'redact' | 'block';
+        condition?: string;
+      };
+      const action =
+        body.action === 'allow' || body.action === 'redact' || body.action === 'block'
+          ? body.action
+          : 'block';
+      try {
+        const rule = store.createPolicyRule(
+          auth.tenantId,
+          {
+            name: body.name ?? '',
+            scope: body.scope ?? '',
+            action,
+            condition: body.condition ?? '',
+          },
+          { id: auth.user.id, email: auth.user.email, role: auth.role }
+        );
+        res.status(201).json({ rule });
+      } catch (err) {
+        res.status(400).json({ error: (err as Error).message });
+      }
+    }
+  );
+
+  router.post(
+    '/enterprise/policies',
+    requireAuth,
+    requirePermission('policies:manage'),
+    (req: AuthenticatedRequest, res) => {
+      const auth = req.auth!;
+      const body = (req.body ?? {}) as {
+        name?: string;
+        agents?: string[];
+        tools?: string[];
+        dataClassification?: string[];
+        decision?: EnforcementAction;
+        strategy?: 'tokenization' | 'masking' | 'strict_block' | 'step_up_mfa' | 'downgrade_readonly';
+      };
+      try {
+        const policy = store.createGatewayPolicy(
+          auth.tenantId,
+          {
+            name: body.name ?? '',
+            agents: Array.isArray(body.agents) && body.agents.length > 0 ? body.agents : ['*'],
+            tools: Array.isArray(body.tools) && body.tools.length > 0 ? body.tools : ['*'],
+            dataClassification:
+              Array.isArray(body.dataClassification) && body.dataClassification.length > 0
+                ? body.dataClassification
+                : ['pii'],
+            decision: body.decision ?? 'block',
+            strategy: body.strategy,
+          },
+          { id: auth.user.id, email: auth.user.email, role: auth.role }
+        );
+        res.status(201).json({ policy });
+      } catch (err) {
+        res.status(400).json({ error: (err as Error).message });
+      }
+    }
+  );
+
+  // Agent Registration & Governance Updates (Owner assignment, Quarantine/Restrict, Risk Recalculation)
+  router.post(
+    '/agents',
+    requireAuth,
+    requirePermission('findings:manage'),
+    (req: AuthenticatedRequest, res) => {
+      const auth = req.auth!;
+      const body = (req.body ?? {}) as {
+        name?: string;
+        owner?: string;
+        ownerTeam?: string;
+        type?: AgentType;
+        identity?: string;
+        businessService?: string;
+        tools?: string[];
+        permissions?: string[];
+        dataSources?: string[];
+      };
+      try {
+        const agent = store.createAgent(
+          auth.tenantId,
+          {
+            name: body.name ?? '',
+            owner: body.owner,
+            ownerTeam: body.ownerTeam,
+            type: body.type,
+            identity: body.identity,
+            businessService: body.businessService,
+            tools: body.tools,
+            permissions: body.permissions,
+            dataSources: body.dataSources,
+          },
+          { id: auth.user.id, email: auth.user.email, role: auth.role }
+        );
+        res.status(201).json({ agent });
+      } catch (err) {
+        res.status(400).json({ error: (err as Error).message });
+      }
+    }
+  );
+
+  router.patch(
+    '/agents/:agentId',
+    requireAuth,
+    requirePermission('findings:manage'),
+    (req: AuthenticatedRequest, res) => {
+      const auth = req.auth!;
+      const body = (req.body ?? {}) as {
+        owner?: string;
+        ownerTeam?: string;
+        status?: AgentStatus;
+        businessService?: string;
+        permissions?: string[];
+      };
+      try {
+        const agent = store.updateAgentGovernance(
+          auth.tenantId,
+          req.params.agentId,
+          body,
+          { id: auth.user.id, email: auth.user.email, role: auth.role }
+        );
+        res.json({ agent });
       } catch (err) {
         res.status(404).json({ error: (err as Error).message });
       }
@@ -832,8 +1012,12 @@ export function createApiRouter() {
     requirePermission('audit:read'),
     (req: AuthenticatedRequest, res) => {
       const auth = req.auth!;
+      const search = typeof req.query.search === 'string' ? req.query.search : undefined;
+      const outcomeRaw = typeof req.query.outcome === 'string' ? req.query.outcome : 'all';
+      const outcome =
+        outcomeRaw === 'allowed' || outcomeRaw === 'denied' ? outcomeRaw : 'all';
       res.json({
-        events: store.getAuditEvents(auth.tenantId),
+        events: store.getAuditEvents(auth.tenantId, { search, outcome }),
         integrity: store.getAuditIntegrity(auth.tenantId),
         retentionDays: store.getEnterpriseState(auth.tenantId).auditRetentionDays,
       });
@@ -1236,6 +1420,49 @@ export function createApiRouter() {
         { id: auth.user.id, email: auth.user.email, role: auth.role }
       );
       res.json({ exported: true, ...pkg });
+    }
+  );
+
+  router.post(
+    '/compliance/controls/:controlId/attest',
+    requireAuth,
+    requirePermission('compliance:export'),
+    (req: AuthenticatedRequest, res) => {
+      const auth = req.auth!;
+      const body = (req.body ?? {}) as {
+        title?: string;
+        summary?: string;
+        source?: string;
+      };
+      try {
+        const result = store.attestComplianceControl(
+          auth.tenantId,
+          req.params.controlId,
+          {
+            title: body.title,
+            summary: body.summary ?? '',
+            source: body.source,
+          },
+          { id: auth.user.id, email: auth.user.email, role: auth.role }
+        );
+        res.status(201).json(result);
+      } catch (err) {
+        res.status(400).json({ error: (err as Error).message });
+      }
+    }
+  );
+
+  router.post(
+    '/system/reset-demo',
+    requireAuth,
+    requirePermission('tenant:admin'),
+    (req: AuthenticatedRequest, res) => {
+      const auth = req.auth!;
+      store.resetToSeedState(
+        { id: auth.user.id, email: auth.user.email, role: auth.role },
+        auth.tenantId
+      );
+      res.json({ reset: true });
     }
   );
 

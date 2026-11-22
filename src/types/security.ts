@@ -641,5 +641,11 @@ export interface AllInOneRunResult {
     auditHeadHash: string;
   };
 }
-
-
+export interface DemoRequestRecord {
+  id: string;
+  name: string;
+  email: string;
+  company: string;
+  submittedAt: string;
+  status: 'received' | 'scheduled';
+}

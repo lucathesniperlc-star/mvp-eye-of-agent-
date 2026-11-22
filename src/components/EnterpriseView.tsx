@@ -3,12 +3,14 @@ import {
   CheckCircle2,
   KeyRound,
   RefreshCw,
+  RotateCcw,
   ShieldCheck,
   UserMinus,
   UserPlus,
   XCircle,
 } from 'lucide-react';
 import type {
+  DemoRequestRecord,
   EnterpriseSsoConfig,
   PlatformHardeningItem,
   RbacRole,
@@ -24,6 +26,7 @@ interface EnterpriseViewProps {
   idpGroupRoleMap: Record<string, RbacRole>;
   hardeningMatrix: PlatformHardeningItem[];
   releaseGates: ReleaseGateCheck[];
+  demoRequests?: DemoRequestRecord[];
   onUpdateSsoConfig: (updates: {
     protocol?: 'saml_2_0' | 'oidc';
     ssoEnforced?: boolean;
@@ -39,6 +42,7 @@ interface EnterpriseViewProps {
   }) => Promise<void>;
   onDeprovisionScimUser: (email: string) => Promise<{ revokedSessionCount: number } | null>;
   onVerifyReleaseGates: () => Promise<void>;
+  onResetDemoState?: () => Promise<void>;
 }
 
 const IDP_GROUPS = [
@@ -58,10 +62,12 @@ export const EnterpriseView: React.FC<EnterpriseViewProps> = ({
   idpGroupRoleMap,
   hardeningMatrix,
   releaseGates,
+  demoRequests = [],
   onUpdateSsoConfig,
   onProvisionScimUser,
   onDeprovisionScimUser,
   onVerifyReleaseGates,
+  onResetDemoState,
 }) => {
   const [scimEmail, setScimEmail] = useState('sre-lead@northwind.com');
   const [scimName, setScimName] = useState('Jordan Patel');
@@ -117,23 +123,47 @@ export const EnterpriseView: React.FC<EnterpriseViewProps> = ({
           </p>
         </div>
 
-        <button
-          type="button"
-          disabled={busy}
-          onClick={async () => {
-            setBusy(true);
-            try {
-              await onVerifyReleaseGates();
-              setStatusMessage('Executed programmatic verification across all 8 enterprise release gates.');
-            } finally {
-              setBusy(false);
-            }
-          }}
-          className="inline-flex items-center gap-2 rounded-lg bg-sky-500 px-4 py-2 text-xs font-semibold text-slate-950 hover:bg-sky-400 disabled:opacity-50 whitespace-nowrap shrink-0"
-        >
-          <ShieldCheck className="w-4 h-4" aria-hidden="true" />
-          <span>Verify all 8 release gates</span>
-        </button>
+        <div className="flex flex-wrap items-center gap-2.5">
+          {onResetDemoState && (
+            <button
+              type="button"
+              disabled={!canAdminTenant || busy}
+              onClick={async () => {
+                setBusy(true);
+                setStatusMessage('');
+                try {
+                  await onResetDemoState();
+                  setStatusMessage('Restored seeded sandbox state across tenants and cleared transient mutations.');
+                } catch (err) {
+                  setStatusMessage((err as Error).message || 'Unable to reset sandbox state.');
+                } finally {
+                  setBusy(false);
+                }
+              }}
+              className="inline-flex items-center gap-2 rounded-lg border border-white/15 bg-[#11151D] px-3.5 py-2 text-xs font-medium text-slate-200 hover:border-amber-400/50 hover:text-white disabled:opacity-50 whitespace-nowrap shrink-0"
+            >
+              <RotateCcw className="w-3.5 h-3.5 text-amber-400" aria-hidden="true" />
+              <span>Reset sandbox state</span>
+            </button>
+          )}
+          <button
+            type="button"
+            disabled={busy}
+            onClick={async () => {
+              setBusy(true);
+              try {
+                await onVerifyReleaseGates();
+                setStatusMessage('Executed programmatic verification across all 8 enterprise release gates.');
+              } finally {
+                setBusy(false);
+              }
+            }}
+            className="inline-flex items-center gap-2 rounded-lg bg-sky-500 px-4 py-2 text-xs font-semibold text-slate-950 hover:bg-sky-400 disabled:opacity-50 whitespace-nowrap shrink-0"
+          >
+            <ShieldCheck className="w-4 h-4" aria-hidden="true" />
+            <span>Verify all 8 release gates</span>
+          </button>
+        </div>
       </div>
 
       {statusMessage && (
@@ -478,6 +508,58 @@ export const EnterpriseView: React.FC<EnterpriseViewProps> = ({
             ))}
           </div>
         </div>
+      </div>
+
+      {/* Persisted Inbound Demo & Briefing Requests */}
+      <div className="rounded-xl border border-white/[0.08] bg-[#11151D] p-5 space-y-4">
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <div>
+            <h2 className="font-display text-base font-semibold text-white">
+              Inbound briefing requests ({demoRequests.length})
+            </h2>
+            <p className="text-xs text-slate-400">
+              Demo and architecture briefing requests submitted from the public landing page and persisted to disk
+            </p>
+          </div>
+        </div>
+
+        {demoRequests.length === 0 ? (
+          <p className="rounded-lg border border-white/[0.06] bg-[#090B10] px-4 py-3 text-xs text-slate-400">
+            No inbound briefing requests recorded yet.
+          </p>
+        ) : (
+          <div className="overflow-x-auto">
+            <table className="w-full text-left text-xs">
+              <thead>
+                <tr className="border-b border-white/[0.08] bg-[#0D1017] text-slate-400">
+                  <th className="px-3 py-2.5 font-medium">Reference ID</th>
+                  <th className="px-3 py-2.5 font-medium">Requester</th>
+                  <th className="px-3 py-2.5 font-medium">Company</th>
+                  <th className="px-3 py-2.5 font-medium">Submitted</th>
+                  <th className="px-3 py-2.5 text-right font-medium">Status</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-white/[0.06]">
+                {demoRequests.map((req) => (
+                  <tr key={req.id} className="hover:bg-white/[0.03]">
+                    <td className="px-3 py-2.5 font-mono text-[11px] text-sky-300">{req.id}</td>
+                    <td className="px-3 py-2.5">
+                      <p className="font-medium text-white">{req.name}</p>
+                      <p className="font-mono text-[11px] text-slate-400">{req.email}</p>
+                    </td>
+                    <td className="px-3 py-2.5 text-slate-300">{req.company}</td>
+                    <td className="px-3 py-2.5 font-mono text-[11px] text-slate-400 tabular-nums">
+                      {req.submittedAt.replace('T', ' ').slice(0, 19)} UTC
+                    </td>
+                    <td className="px-3 py-2.5 text-right font-mono text-[11px] text-emerald-400 uppercase">
+                      {req.status}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
       </div>
     </div>
   );

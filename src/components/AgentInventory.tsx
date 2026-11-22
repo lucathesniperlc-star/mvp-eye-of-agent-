@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Search } from 'lucide-react';
+import { Plus, Search, X } from 'lucide-react';
 import type { Agent, AgentType, DataSource, RiskLevel } from '../types/security';
 import { filterAgents } from '../utils/riskEngine';
 import { RiskLabel } from './RiskIndicator';
@@ -9,6 +9,18 @@ interface AgentInventoryProps {
   totalTenantDiscoveredCount: number;
   agents: Agent[];
   dataSources: DataSource[];
+  canManageAgents?: boolean;
+  onCreateAgent?: (payload: {
+    name: string;
+    owner?: string;
+    ownerTeam?: string;
+    type?: AgentType;
+    identity?: string;
+    businessService?: string;
+    tools?: string[];
+    permissions?: string[];
+    dataSources?: string[];
+  }) => Promise<Agent | null>;
   onSelectAgent: (agentId: string) => void;
 }
 
@@ -17,11 +29,26 @@ export const AgentInventory: React.FC<AgentInventoryProps> = ({
   totalTenantDiscoveredCount,
   agents,
   dataSources,
+  canManageAgents = true,
+  onCreateAgent,
   onSelectAgent,
 }) => {
   const [query, setQuery] = useState('');
   const [riskFilter, setRiskFilter] = useState<RiskLevel | 'all'>('all');
   const [typeFilter, setTypeFilter] = useState<AgentType | 'all'>('all');
+
+  const [createOpen, setCreateOpen] = useState(false);
+  const [newName, setNewName] = useState('');
+  const [newOwner, setNewOwner] = useState('ai-platform@northwind.com');
+  const [newTeam, setNewTeam] = useState('AI Platform');
+  const [newType, setNewType] = useState<AgentType>('Internal agent');
+  const [newService, setNewService] = useState('Enterprise Operations');
+  const [newTools, setNewTools] = useState('read_records, send_email');
+  const [newPerms, setNewPerms] = useState('workspace:read, crm:contacts.read');
+  const [newDataSource, setNewDataSource] = useState(dataSources[0]?.id ?? 'ds_snowflake');
+  const [creating, setCreating] = useState(false);
+  const [createError, setCreateError] = useState('');
+  const [createNotice, setCreateNotice] = useState('');
 
   const filtered = filterAgents(agents, tenantId, {
     query,
@@ -33,6 +60,49 @@ export const AgentInventory: React.FC<AgentInventoryProps> = ({
     setQuery('');
     setRiskFilter('all');
     setTypeFilter('all');
+  };
+
+  const handleCreateSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!onCreateAgent) return;
+    if (!newName.trim()) {
+      setCreateError('Agent name is required.');
+      return;
+    }
+    setCreateError('');
+    setCreateNotice('');
+    setCreating(true);
+    try {
+      const tools = newTools
+        .split(',')
+        .map((s) => s.trim())
+        .filter(Boolean);
+      const permissions = newPerms
+        .split(',')
+        .map((s) => s.trim())
+        .filter(Boolean);
+      const created = await onCreateAgent({
+        name: newName.trim(),
+        owner: newOwner.trim() || 'unassigned',
+        ownerTeam: newTeam.trim() || 'Unassigned',
+        type: newType,
+        businessService: newService.trim() || 'Enterprise Operations',
+        tools: tools.length ? tools : ['read_records'],
+        permissions: permissions.length ? permissions : ['workspace:read'],
+        dataSources: newDataSource ? [newDataSource] : undefined,
+      });
+      setNewName('');
+      setCreateOpen(false);
+      if (created) {
+        setCreateNotice(
+          `Registered "${created.name}" (${created.identity}) — 6-factor score ${created.riskScore} (${created.riskLevel}).`
+        );
+      }
+    } catch (err) {
+      setCreateError((err as Error).message || 'Unable to register agent.');
+    } finally {
+      setCreating(false);
+    }
   };
 
   return (
@@ -47,7 +117,191 @@ export const AgentInventory: React.FC<AgentInventoryProps> = ({
             across cloud and identity telemetry
           </p>
         </div>
+
+        {onCreateAgent && (
+          <button
+            type="button"
+            disabled={!canManageAgents}
+            onClick={() => {
+              setCreateError('');
+              setCreateOpen((prev) => !prev);
+            }}
+            className="inline-flex items-center gap-2 rounded-lg bg-sky-500 px-4 py-2 text-xs font-semibold text-slate-950 hover:bg-sky-400 disabled:opacity-50 whitespace-nowrap shrink-0"
+          >
+            {createOpen ? (
+              <>
+                <X className="w-3.5 h-3.5" aria-hidden="true" />
+                <span>Close form</span>
+              </>
+            ) : (
+              <>
+                <Plus className="w-3.5 h-3.5" aria-hidden="true" />
+                <span>Register agent</span>
+              </>
+            )}
+          </button>
+        )}
       </div>
+
+      {createNotice && (
+        <div
+          role="status"
+          className="rounded-lg border border-emerald-500/30 bg-emerald-500/10 px-4 py-2.5 text-xs text-emerald-300"
+        >
+          {createNotice}
+        </div>
+      )}
+
+      {createOpen && onCreateAgent && (
+        <form
+          onSubmit={handleCreateSubmit}
+          className="rounded-xl border border-sky-500/30 bg-[#11151D] p-5 space-y-4"
+        >
+          <div className="flex items-center justify-between">
+            <div>
+              <h2 className="font-display text-base font-semibold text-white">
+                Register AI agent into security graph
+              </h2>
+              <p className="text-xs text-slate-400">
+                Creates agent entity, binds service identity and data access edges, and computes 6-factor risk posture
+              </p>
+            </div>
+          </div>
+
+          <div className="grid grid-cols-1 gap-3 md:grid-cols-4">
+            <div>
+              <label htmlFor="new-agent-name" className="block text-[11px] text-slate-400">
+                Agent name
+              </label>
+              <input
+                id="new-agent-name"
+                type="text"
+                value={newName}
+                onChange={(e) => setNewName(e.target.value)}
+                placeholder="Treasury Reconciliation Bot"
+                className="mt-1 w-full rounded-lg border border-white/15 bg-[#090B10] px-3 py-2 text-xs text-white placeholder:text-slate-500 focus:border-sky-500 focus:outline-none"
+              />
+            </div>
+            <div>
+              <label htmlFor="new-agent-owner" className="block text-[11px] text-slate-400">
+                Owner email
+              </label>
+              <input
+                id="new-agent-owner"
+                type="text"
+                value={newOwner}
+                onChange={(e) => setNewOwner(e.target.value)}
+                className="mt-1 w-full rounded-lg border border-white/15 bg-[#090B10] px-3 py-2 text-xs text-white focus:border-sky-500 focus:outline-none"
+              />
+            </div>
+            <div>
+              <label htmlFor="new-agent-team" className="block text-[11px] text-slate-400">
+                Owner team
+              </label>
+              <input
+                id="new-agent-team"
+                type="text"
+                value={newTeam}
+                onChange={(e) => setNewTeam(e.target.value)}
+                className="mt-1 w-full rounded-lg border border-white/15 bg-[#090B10] px-3 py-2 text-xs text-white focus:border-sky-500 focus:outline-none"
+              />
+            </div>
+            <div>
+              <label htmlFor="new-agent-type" className="block text-[11px] text-slate-400">
+                Agent classification
+              </label>
+              <select
+                id="new-agent-type"
+                value={newType}
+                onChange={(e) => setNewType(e.target.value as AgentType)}
+                className="mt-1 w-full rounded-lg border border-white/15 bg-[#090B10] px-3 py-2 text-xs text-white focus:border-sky-500 focus:outline-none"
+              >
+                <option value="Internal agent">Internal agent</option>
+                <option value="Customer-facing">Customer-facing</option>
+                <option value="Shadow AI">Shadow AI</option>
+                <option value="Unowned">Unowned</option>
+              </select>
+            </div>
+
+            <div>
+              <label htmlFor="new-agent-service" className="block text-[11px] text-slate-400">
+                Business service
+              </label>
+              <input
+                id="new-agent-service"
+                type="text"
+                value={newService}
+                onChange={(e) => setNewService(e.target.value)}
+                className="mt-1 w-full rounded-lg border border-white/15 bg-[#090B10] px-3 py-2 text-xs text-white focus:border-sky-500 focus:outline-none"
+              />
+            </div>
+            <div>
+              <label htmlFor="new-agent-ds" className="block text-[11px] text-slate-400">
+                Reachable data store
+              </label>
+              <select
+                id="new-agent-ds"
+                value={newDataSource}
+                onChange={(e) => setNewDataSource(e.target.value)}
+                className="mt-1 w-full rounded-lg border border-white/15 bg-[#090B10] px-3 py-2 text-xs text-white focus:border-sky-500 focus:outline-none"
+              >
+                {dataSources.map((ds) => (
+                  <option key={ds.id} value={ds.id}>
+                    {ds.name} ({ds.classification})
+                  </option>
+                ))}
+              </select>
+            </div>
+            <div>
+              <label htmlFor="new-agent-tools" className="block text-[11px] text-slate-400">
+                MCP tools (comma-separated)
+              </label>
+              <input
+                id="new-agent-tools"
+                type="text"
+                value={newTools}
+                onChange={(e) => setNewTools(e.target.value)}
+                className="mt-1 w-full rounded-lg border border-white/15 bg-[#090B10] px-3 py-2 font-mono text-xs text-white focus:border-sky-500 focus:outline-none"
+              />
+            </div>
+            <div>
+              <label htmlFor="new-agent-perms" className="block text-[11px] text-slate-400">
+                IAM permissions
+              </label>
+              <input
+                id="new-agent-perms"
+                type="text"
+                value={newPerms}
+                onChange={(e) => setNewPerms(e.target.value)}
+                className="mt-1 w-full rounded-lg border border-white/15 bg-[#090B10] px-3 py-2 font-mono text-xs text-white focus:border-sky-500 focus:outline-none"
+              />
+            </div>
+          </div>
+
+          {createError && (
+            <p role="alert" className="text-xs text-rose-400">
+              {createError}
+            </p>
+          )}
+
+          <div className="flex items-center justify-end gap-2">
+            <button
+              type="button"
+              onClick={() => setCreateOpen(false)}
+              className="rounded-lg border border-white/15 px-3.5 py-2 text-xs font-medium text-slate-300 hover:text-white"
+            >
+              Cancel
+            </button>
+            <button
+              type="submit"
+              disabled={creating}
+              className="rounded-lg bg-sky-500 px-4 py-2 text-xs font-semibold text-slate-950 hover:bg-sky-400 disabled:opacity-50"
+            >
+              {creating ? 'Registering...' : 'Register & score agent'}
+            </button>
+          </div>
+        </form>
+      )}
 
       {/* Filter Toolbar */}
       <div className="flex flex-wrap items-center gap-3 rounded-xl border border-white/[0.08] bg-[#11151D] p-4">

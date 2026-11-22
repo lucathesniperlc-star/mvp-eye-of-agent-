@@ -32,6 +32,8 @@ import {
 import type {
   ActivityEvent,
   Agent,
+  AgentStatus,
+  AgentType,
   AllInOneRunResult,
   AuditChainIntegrity,
   AuditEventRecord,
@@ -40,6 +42,7 @@ import type {
   Connector,
   ControlItem,
   DataSource,
+  DemoRequestRecord,
   EnforcementAction,
   EnterpriseSsoConfig,
   EvidenceItem,
@@ -55,6 +58,7 @@ import type {
   PlaybookDefinition,
   PlaybookExecutionRecord,
   PlaybookId,
+  PolicyAction,
   PolicyMode,
   PolicyRule,
   PolicySimulationEvent,
@@ -135,6 +139,7 @@ const DEFAULT_RETENTION_STATE: RetentionPolicyConfig = {
 
 interface WorkspacePayload {
   tenant: Tenant;
+  tenants?: Tenant[];
   agents: Agent[];
   mcpServers: McpServer[];
   models: ModelAsset[];
@@ -157,6 +162,7 @@ interface WorkspacePayload {
   };
   auditEvents: AuditEventRecord[];
   enterprise?: EnterpriseStatePayload;
+  demoRequests?: DemoRequestRecord[];
 }
 
 export default function App() {
@@ -175,8 +181,12 @@ export default function App() {
   const [activeScreen, setActiveScreen] = useState<ScreenId>('overview');
   const [selectedAgentId, setSelectedAgentId] = useState<string>('agent_finance_copilot');
 
+  const [tenants, setTenants] = useState<Tenant[]>(TENANTS);
   const [tenantRecord, setTenantRecord] = useState<Tenant>(TENANTS[0]);
   const [agents, setAgents] = useState<Agent[]>(INITIAL_AGENTS);
+  const [mcpServers, setMcpServers] = useState<McpServer[]>(MCP_SERVERS);
+  const [models, setModels] = useState<ModelAsset[]>(MODELS);
+  const [dataSources, setDataSources] = useState<DataSource[]>(DATA_SOURCES);
   const [findings, setFindings] = useState<Finding[]>(INITIAL_FINDINGS);
   const [controls, setControls] = useState<ControlItem[]>(CONTROLS);
   const [evidenceItems, setEvidenceItems] = useState<EvidenceItem[]>(EVIDENCE_ITEMS);
@@ -199,6 +209,7 @@ export default function App() {
   const [graphPaths, setGraphPaths] = useState<GraphTraversalPath[]>([]);
   const [auditEvents, setAuditEvents] = useState<AuditEventRecord[]>([]);
   const [enterpriseState, setEnterpriseState] = useState<EnterpriseStatePayload | null>(null);
+  const [demoRequests, setDemoRequests] = useState<DemoRequestRecord[]>([]);
   const [rbacNotice, setRbacNotice] = useState<string>('');
 
   const [tourActive, setTourActive] = useState<boolean>(false);
@@ -209,8 +220,12 @@ export default function App() {
     if (!res.ok) return false;
     const data = (await res.json()) as WorkspacePayload;
     setTenantRecord(data.tenant);
+    if (data.tenants?.length) setTenants(data.tenants);
     setSelectedTenantId(data.tenant.id);
     setAgents(data.agents);
+    if (data.mcpServers?.length) setMcpServers(data.mcpServers);
+    if (data.models?.length) setModels(data.models);
+    if (data.dataSources?.length) setDataSources(data.dataSources);
     setFindings(data.findings);
     if (data.controls?.length) setControls(data.controls);
     if (data.evidence?.length) setEvidenceItems(data.evidence);
@@ -231,6 +246,7 @@ export default function App() {
     if (data.enterprise) {
       setEnterpriseState(data.enterprise);
     }
+    setDemoRequests(data.demoRequests ?? []);
     if (data.agents.length > 0 && !data.agents.some((a) => a.id === selectedAgentId)) {
       setSelectedAgentId(data.agents[0].id);
     }
@@ -273,7 +289,7 @@ export default function App() {
     tenantRecord,
     agents,
     findings,
-    DATA_SOURCES,
+    dataSources,
     controls
   );
 
@@ -550,6 +566,153 @@ export default function App() {
       const data = await res.json();
       setAuditEvents(data.events ?? []);
     }
+  };
+
+  const handleFilterAuditEvents = async (filters: {
+    search?: string;
+    outcome?: 'all' | 'allowed' | 'denied';
+  }) => {
+    setRbacNotice('');
+    const params = new URLSearchParams();
+    if (filters.search?.trim()) params.set('search', filters.search.trim());
+    if (filters.outcome && filters.outcome !== 'all') params.set('outcome', filters.outcome);
+    const qs = params.toString();
+    const res = await fetch(`/api/audit-events${qs ? `?${qs}` : ''}`);
+    if (!res.ok) {
+      const err = await res.json();
+      setRbacNotice(err.error || 'Audit query denied');
+      return;
+    }
+    const data = await res.json();
+    setAuditEvents(data.events ?? []);
+  };
+
+  const handleCreateAgent = async (payload: {
+    name: string;
+    owner?: string;
+    ownerTeam?: string;
+    type?: AgentType;
+    identity?: string;
+    businessService?: string;
+    tools?: string[];
+    permissions?: string[];
+    dataSources?: string[];
+  }): Promise<Agent | null> => {
+    setRbacNotice('');
+    const res = await fetch('/api/agents', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+    const data = await res.json();
+    if (!res.ok) {
+      const msg = data.error || 'Unable to register agent';
+      setRbacNotice(msg);
+      throw new Error(msg);
+    }
+    await loadWorkspace();
+    return (data.agent as Agent) ?? null;
+  };
+
+  const handleUpdateAgentGovernance = async (
+    agentId: string,
+    updates: {
+      owner?: string;
+      ownerTeam?: string;
+      status?: AgentStatus;
+      businessService?: string;
+      permissions?: string[];
+    }
+  ): Promise<Agent | null> => {
+    setRbacNotice('');
+    const res = await fetch(`/api/agents/${agentId}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(updates),
+    });
+    const data = await res.json();
+    if (!res.ok) {
+      const msg = data.error || 'Unable to update agent governance';
+      setRbacNotice(msg);
+      throw new Error(msg);
+    }
+    await loadWorkspace();
+    return (data.agent as Agent) ?? null;
+  };
+
+  const handleCreatePolicyRule = async (payload: {
+    name: string;
+    scope: string;
+    action: PolicyAction;
+    condition: string;
+  }) => {
+    setRbacNotice('');
+    const res = await fetch('/api/policy/rules', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+    const data = await res.json();
+    if (!res.ok) {
+      const msg = data.error || 'Unable to create policy rule';
+      setRbacNotice(msg);
+      throw new Error(msg);
+    }
+    await loadWorkspace();
+  };
+
+  const handleCreateGatewayPolicy = async (payload: {
+    name: string;
+    agents: string[];
+    tools: string[];
+    dataClassification: string[];
+    decision: EnforcementAction;
+  }) => {
+    setRbacNotice('');
+    const res = await fetch('/api/enterprise/policies', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+    const data = await res.json();
+    if (!res.ok) {
+      const msg = data.error || 'Unable to create YAML gateway policy';
+      setRbacNotice(msg);
+      throw new Error(msg);
+    }
+    await loadWorkspace();
+  };
+
+  const handleAttestControl = async (
+    controlId: string,
+    payload: { title?: string; summary: string; source?: string }
+  ): Promise<{ control: ControlItem; evidenceRecord: EvidenceRecord } | null> => {
+    setRbacNotice('');
+    const res = await fetch(`/api/compliance/controls/${encodeURIComponent(controlId)}/attest`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+    const data = await res.json();
+    if (!res.ok) {
+      const msg = data.error || 'Control attestation denied';
+      setRbacNotice(msg);
+      throw new Error(msg);
+    }
+    await loadWorkspace();
+    return data as { control: ControlItem; evidenceRecord: EvidenceRecord };
+  };
+
+  const handleResetDemoState = async () => {
+    setRbacNotice('');
+    const res = await fetch('/api/system/reset-demo', { method: 'POST' });
+    const data = await res.json();
+    if (!res.ok) {
+      const msg = data.error || 'Sandbox reset denied';
+      setRbacNotice(msg);
+      throw new Error(msg);
+    }
+    await loadWorkspace();
   };
 
   const handleRecalculateAgentRisk = async (
@@ -916,6 +1079,9 @@ export default function App() {
   const canManageConnectors = Boolean(
     !authSession || authSession.permissions.includes('connectors:manage')
   );
+  const canManageAgents = Boolean(
+    !authSession || authSession.permissions.includes('findings:manage')
+  );
   const canAdminTenant = Boolean(
     !authSession || authSession.permissions.includes('tenant:admin')
   );
@@ -925,7 +1091,7 @@ export default function App() {
 
   return (
     <DashboardShell
-      tenants={TENANTS}
+      tenants={tenants}
       selectedTenantId={selectedTenantId}
       onSelectTenant={handleSelectTenant}
       activeScreen={activeScreen}
@@ -963,7 +1129,7 @@ export default function App() {
           agents={agents}
           findings={findings}
           controls={controls}
-          dataSources={DATA_SOURCES}
+          dataSources={dataSources}
           activity={activity}
           trendSeries={trendSeries}
           onSelectAgent={(id) => {
@@ -1004,7 +1170,9 @@ export default function App() {
           tenantId={tenantRecord.id}
           totalTenantDiscoveredCount={tenantRecord.totalDiscoveredAgents}
           agents={agents}
-          dataSources={DATA_SOURCES}
+          dataSources={dataSources}
+          canManageAgents={canManageAgents}
+          onCreateAgent={handleCreateAgent}
           onSelectAgent={(id) => {
             setSelectedAgentId(id);
             setActiveScreen('agent-detail');
@@ -1015,10 +1183,12 @@ export default function App() {
       {activeScreen === 'agent-detail' && selectedAgent && (
         <AgentDetail
           agent={selectedAgent}
-          mcpServers={MCP_SERVERS}
-          models={MODELS}
-          dataSources={DATA_SOURCES}
+          mcpServers={mcpServers}
+          models={models}
+          dataSources={dataSources}
           findings={findings}
+          canManageAgents={canManageAgents}
+          onUpdateAgentGovernance={handleUpdateAgentGovernance}
           onBack={() => setActiveScreen('inventory')}
           onViewExposurePath={(id) => {
             setSelectedAgentId(id);
@@ -1032,8 +1202,8 @@ export default function App() {
         <ExposurePaths
           tenantId={tenantRecord.id}
           agents={agents}
-          mcpServers={MCP_SERVERS}
-          dataSources={DATA_SOURCES}
+          mcpServers={mcpServers}
+          dataSources={dataSources}
           graphPaths={graphPaths}
           selectedAgentId={selectedAgent?.id ?? 'agent_finance_copilot'}
           onSelectAgentId={(id) => setSelectedAgentId(id)}
@@ -1064,6 +1234,7 @@ export default function App() {
           evidence={evidenceItems}
           evidenceRecords={evidenceRecords}
           onExportAuditPack={handleExportAuditPack}
+          onAttestControl={handleAttestControl}
         />
       )}
 
@@ -1073,6 +1244,8 @@ export default function App() {
           onChangeMode={handleChangePolicyMode}
           rules={policyRules}
           onToggleRule={handleToggleRule}
+          onCreatePolicyRule={handleCreatePolicyRule}
+          onCreateGatewayPolicy={handleCreateGatewayPolicy}
           simulationEvents={simulationEvents}
           agents={agents}
           gatewayPolicies={gatewayPolicies}
@@ -1118,10 +1291,12 @@ export default function App() {
           idpGroupRoleMap={enterpriseState.idpGroupRoleMap}
           hardeningMatrix={enterpriseState.hardeningMatrix}
           releaseGates={enterpriseState.releaseGates}
+          demoRequests={demoRequests}
           onUpdateSsoConfig={handleUpdateSsoConfig}
           onProvisionScimUser={handleProvisionScimUser}
           onDeprovisionScimUser={handleDeprovisionScimUser}
           onVerifyReleaseGates={handleVerifyReleaseGates}
+          onResetDemoState={handleResetDemoState}
         />
       )}
 
@@ -1134,6 +1309,7 @@ export default function App() {
           retentionDays={enterpriseState?.auditRetentionDays}
           canAdminTenant={canAdminTenant}
           onRefreshAudit={handleRefreshAudit}
+          onFilterAuditEvents={handleFilterAuditEvents}
           onUpdateRetentionDays={handleUpdateAuditRetention}
           onExportAuditLedger={handleExportAuditLedger}
         />

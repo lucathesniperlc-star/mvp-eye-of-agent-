@@ -73,12 +73,14 @@ export const LandingPage: React.FC<LandingPageProps> = ({ onLaunchDemo }) => {
   const [formEmail, setFormEmail] = useState('');
   const [formCompany, setFormCompany] = useState('');
   const [formError, setFormError] = useState('');
+  const [formSubmitting, setFormSubmitting] = useState(false);
   const [formSubmitted, setFormSubmitted] = useState(false);
+  const [submittedRequestId, setSubmittedRequestId] = useState('');
 
   const activeNode =
     PREVIEW_NODES.find((n) => n.id === selectedPreviewNode) ?? PREVIEW_NODES[0];
 
-  const handleRequestSubmit = (e: React.FormEvent) => {
+  const handleRequestSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!formName.trim() || !formCompany.trim()) {
       setFormError('Please enter your full name and organization.');
@@ -90,7 +92,29 @@ export const LandingPage: React.FC<LandingPageProps> = ({ onLaunchDemo }) => {
       return;
     }
     setFormError('');
-    setFormSubmitted(true);
+    setFormSubmitting(true);
+    try {
+      const res = await fetch('/api/demo-requests', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          name: formName.trim(),
+          email: formEmail.trim(),
+          company: formCompany.trim(),
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        setFormError(data.error || 'Unable to submit demo request.');
+        return;
+      }
+      setSubmittedRequestId(data.request?.id ?? '');
+      setFormSubmitted(true);
+    } catch {
+      setFormError('Network error while submitting briefing request.');
+    } finally {
+      setFormSubmitting(false);
+    }
   };
 
   return (
@@ -686,6 +710,11 @@ export const LandingPage: React.FC<LandingPageProps> = ({ onLaunchDemo }) => {
                 <p className="mt-2 text-xs leading-relaxed text-slate-300">
                   We have reserved a sandbox briefing for <span className="font-medium text-white">{formCompany}</span> ({formEmail}). You can explore the live Northwind Financial prototype immediately.
                 </p>
+                {submittedRequestId && (
+                  <p className="mt-2 font-mono text-[11px] text-emerald-300">
+                    Reference ID: {submittedRequestId} · Logged in control plane audit trail
+                  </p>
+                )}
                 <div className="mt-4 flex items-center justify-end gap-3">
                   <button
                     type="button"
@@ -757,9 +786,10 @@ export const LandingPage: React.FC<LandingPageProps> = ({ onLaunchDemo }) => {
                   </button>
                   <button
                     type="submit"
-                    className="rounded-lg bg-sky-500 px-4 py-2 text-xs font-semibold text-slate-950 hover:bg-sky-400"
+                    disabled={formSubmitting}
+                    className="rounded-lg bg-sky-500 px-4 py-2 text-xs font-semibold text-slate-950 hover:bg-sky-400 disabled:opacity-50"
                   >
-                    Submit request
+                    {formSubmitting ? 'Submitting...' : 'Submit request'}
                   </button>
                 </div>
               </form>

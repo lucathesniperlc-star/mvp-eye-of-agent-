@@ -5,6 +5,7 @@ import {
   FileCode2,
   PauseCircle,
   Play,
+  Plus,
   RotateCcw,
   Shield,
   ShieldAlert,
@@ -20,6 +21,7 @@ import type {
   PlaybookDefinition,
   PlaybookExecutionRecord,
   PlaybookId,
+  PolicyAction,
   PolicyMode,
   PolicyRule,
   PolicySimulationEvent,
@@ -70,6 +72,19 @@ interface PolicyViewProps {
   onApprovePlaybookExecution?: (executionId: string) => Promise<void>;
   onRollbackPlaybookExecution?: (executionId: string) => Promise<void>;
   onToggleRetentionOptIn?: (optIn: boolean) => Promise<void>;
+  onCreatePolicyRule?: (payload: {
+    name: string;
+    scope: string;
+    action: PolicyAction;
+    condition: string;
+  }) => Promise<void>;
+  onCreateGatewayPolicy?: (payload: {
+    name: string;
+    agents: string[];
+    tools: string[];
+    dataClassification: string[];
+    decision: EnforcementAction;
+  }) => Promise<void>;
 }
 
 const DEFAULT_RETENTION: RetentionPolicyConfig = {
@@ -125,6 +140,8 @@ export const PolicyView: React.FC<PolicyViewProps> = ({
   onApprovePlaybookExecution,
   onRollbackPlaybookExecution,
   onToggleRetentionOptIn,
+  onCreatePolicyRule,
+  onCreateGatewayPolicy,
 }) => {
   const summary = summarizePolicySimulation(policyMode, rules, simulationEvents);
 
@@ -149,8 +166,98 @@ export const PolicyView: React.FC<PolicyViewProps> = ({
   );
   const [soarNotice, setSoarNotice] = useState<string>('');
 
+  const [showGwPolicyForm, setShowGwPolicyForm] = useState(false);
+  const [gwPolName, setGwPolName] = useState('');
+  const [gwPolAgents, setGwPolAgents] = useState('finance-copilot');
+  const [gwPolTools, setGwPolTools] = useState('export_payroll');
+  const [gwPolClass, setGwPolClass] = useState('pii_financial');
+  const [gwPolDecision, setGwPolDecision] = useState<EnforcementAction>('block');
+  const [gwPolBusy, setGwPolBusy] = useState(false);
+  const [gwPolError, setGwPolError] = useState('');
+  const [gwPolNotice, setGwPolNotice] = useState('');
+
+  const [showRuleForm, setShowRuleForm] = useState(false);
+  const [ruleName, setRuleName] = useState('');
+  const [ruleScope, setRuleScope] = useState('All agents · MCP tools');
+  const [ruleAction, setRuleAction] = useState<PolicyAction>('block');
+  const [ruleCondition, setRuleCondition] = useState('');
+  const [ruleBusy, setRuleBusy] = useState(false);
+  const [ruleError, setRuleError] = useState('');
+  const [ruleNotice, setRuleNotice] = useState('');
+
   const activeYamlPolicy =
     gatewayPolicies.find((p) => p.id === selectedPolicyId) ?? gatewayPolicies[0];
+
+  const handleCreateGwPolicySubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!onCreateGatewayPolicy) return;
+    if (!gwPolName.trim()) {
+      setGwPolError('Policy name is required.');
+      return;
+    }
+    setGwPolBusy(true);
+    setGwPolError('');
+    setGwPolNotice('');
+    try {
+      const splitCsv = (val: string, fallback: string) => {
+        const items = val
+          .split(',')
+          .map((s) => s.trim())
+          .filter(Boolean);
+        return items.length > 0 ? items : [fallback];
+      };
+      const expectedSlug = gwPolName
+        .trim()
+        .toLowerCase()
+        .replace(/[^a-z0-9]+/g, '_')
+        .replace(/^_+|_+$/g, '');
+      await onCreateGatewayPolicy({
+        name: gwPolName.trim(),
+        agents: splitCsv(gwPolAgents, '*'),
+        tools: splitCsv(gwPolTools, '*'),
+        dataClassification: splitCsv(gwPolClass, 'pii'),
+        decision: gwPolDecision,
+      });
+      if (expectedSlug) {
+        setSelectedPolicyId(expectedSlug);
+      }
+      setGwPolNotice(`Created gateway YAML policy "${gwPolName.trim()}".`);
+      setGwPolName('');
+      setShowGwPolicyForm(false);
+    } catch (err) {
+      setGwPolError((err as Error).message || 'Unable to create YAML policy.');
+    } finally {
+      setGwPolBusy(false);
+    }
+  };
+
+  const handleCreateRuleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!onCreatePolicyRule) return;
+    if (!ruleName.trim() || !ruleCondition.trim()) {
+      setRuleError('Rule name and condition are required.');
+      return;
+    }
+    setRuleBusy(true);
+    setRuleError('');
+    setRuleNotice('');
+    try {
+      await onCreatePolicyRule({
+        name: ruleName.trim(),
+        scope: ruleScope.trim() || 'All agents · MCP tools',
+        action: ruleAction,
+        condition: ruleCondition.trim(),
+      });
+      setRuleNotice(`Governance rule "${ruleName.trim()}" created and active.`);
+      setRuleName('');
+      setRuleCondition('');
+      setShowRuleForm(false);
+    } catch (err) {
+      setRuleError((err as Error).message || 'Unable to create governance rule.');
+    } finally {
+      setRuleBusy(false);
+    }
+  };
 
   const handleRunGatewayInspect = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -764,11 +871,26 @@ export const PolicyView: React.FC<PolicyViewProps> = ({
       <div className="grid grid-cols-1 gap-6 lg:grid-cols-12">
         <div className="rounded-xl border border-white/[0.08] bg-[#11151D] p-5 space-y-3.5 lg:col-span-7">
           <div className="space-y-2.5">
-            <div className="flex items-center gap-2">
-              <FileCode2 className="w-4 h-4 text-sky-400 shrink-0" aria-hidden="true" />
-              <h2 className="font-display text-base font-semibold text-white">
-                Gateway policy model (YAML)
-              </h2>
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <div className="flex items-center gap-2">
+                <FileCode2 className="w-4 h-4 text-sky-400 shrink-0" aria-hidden="true" />
+                <h2 className="font-display text-base font-semibold text-white">
+                  Gateway policy model (YAML)
+                </h2>
+              </div>
+              {onCreateGatewayPolicy && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setGwPolError('');
+                    setShowGwPolicyForm((v) => !v);
+                  }}
+                  className="inline-flex items-center gap-1 rounded-lg border border-sky-500/40 bg-sky-500/15 px-2.5 py-1 text-[11px] font-medium text-sky-300 hover:bg-sky-500/25 whitespace-nowrap"
+                >
+                  <Plus className="w-3 h-3" aria-hidden="true" />
+                  <span>{showGwPolicyForm ? 'Close form' : 'New YAML policy'}</span>
+                </button>
+              )}
             </div>
             <div className="flex flex-wrap items-center gap-1.5">
               {gatewayPolicies.map((pol) => (
@@ -787,6 +909,113 @@ export const PolicyView: React.FC<PolicyViewProps> = ({
               ))}
             </div>
           </div>
+
+          {gwPolNotice && (
+            <div
+              role="status"
+              className="rounded-lg border border-emerald-500/30 bg-emerald-500/10 px-3 py-2 text-xs text-emerald-300"
+            >
+              {gwPolNotice}
+            </div>
+          )}
+
+          {showGwPolicyForm && onCreateGatewayPolicy && (
+            <form
+              onSubmit={handleCreateGwPolicySubmit}
+              className="rounded-lg border border-white/[0.08] bg-[#090B10] p-3.5 space-y-3"
+            >
+              <div className="grid grid-cols-1 gap-2.5 sm:grid-cols-2">
+                <div>
+                  <label htmlFor="gw-pol-name" className="block text-[11px] text-slate-400">
+                    Policy name
+                  </label>
+                  <input
+                    id="gw-pol-name"
+                    type="text"
+                    required
+                    value={gwPolName}
+                    onChange={(e) => setGwPolName(e.target.value)}
+                    placeholder="e.g. Block unredacted SSN export"
+                    className="mt-1 w-full rounded-lg border border-white/15 bg-[#11151D] px-2.5 py-1.5 text-xs text-white focus:border-sky-500 focus:outline-none"
+                  />
+                </div>
+                <div>
+                  <label htmlFor="gw-pol-decision" className="block text-[11px] text-slate-400">
+                    PDP decision
+                  </label>
+                  <select
+                    id="gw-pol-decision"
+                    value={gwPolDecision}
+                    onChange={(e) => setGwPolDecision(e.target.value as EnforcementAction)}
+                    className="mt-1 w-full rounded-lg border border-white/15 bg-[#11151D] px-2.5 py-1.5 font-mono text-xs text-white focus:border-sky-500 focus:outline-none"
+                  >
+                    {ALL_ENFORCEMENT_ACTIONS.map((act) => (
+                      <option key={act} value={act}>
+                        {act}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+                <div>
+                  <label htmlFor="gw-pol-agents" className="block text-[11px] text-slate-400">
+                    Agents (comma-separated)
+                  </label>
+                  <input
+                    id="gw-pol-agents"
+                    type="text"
+                    value={gwPolAgents}
+                    onChange={(e) => setGwPolAgents(e.target.value)}
+                    className="mt-1 w-full rounded-lg border border-white/15 bg-[#11151D] px-2.5 py-1.5 font-mono text-xs text-white focus:border-sky-500 focus:outline-none"
+                  />
+                </div>
+                <div>
+                  <label htmlFor="gw-pol-tools" className="block text-[11px] text-slate-400">
+                    Tools (comma-separated)
+                  </label>
+                  <input
+                    id="gw-pol-tools"
+                    type="text"
+                    value={gwPolTools}
+                    onChange={(e) => setGwPolTools(e.target.value)}
+                    className="mt-1 w-full rounded-lg border border-white/15 bg-[#11151D] px-2.5 py-1.5 font-mono text-xs text-white focus:border-sky-500 focus:outline-none"
+                  />
+                </div>
+                <div className="sm:col-span-2">
+                  <label htmlFor="gw-pol-class" className="block text-[11px] text-slate-400">
+                    Data classification (comma-separated)
+                  </label>
+                  <input
+                    id="gw-pol-class"
+                    type="text"
+                    value={gwPolClass}
+                    onChange={(e) => setGwPolClass(e.target.value)}
+                    className="mt-1 w-full rounded-lg border border-white/15 bg-[#11151D] px-2.5 py-1.5 font-mono text-xs text-white focus:border-sky-500 focus:outline-none"
+                  />
+                </div>
+              </div>
+              {gwPolError && (
+                <p role="alert" className="text-xs text-rose-400">
+                  {gwPolError}
+                </p>
+              )}
+              <div className="flex items-center gap-2">
+                <button
+                  type="submit"
+                  disabled={gwPolBusy}
+                  className="rounded-lg bg-sky-500 px-3 py-1.5 text-xs font-semibold text-slate-950 hover:bg-sky-400 disabled:opacity-50"
+                >
+                  {gwPolBusy ? 'Saving...' : 'Create YAML policy'}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setShowGwPolicyForm(false)}
+                  className="rounded-lg border border-white/15 bg-[#11151D] px-3 py-1.5 text-xs font-medium text-slate-300 hover:text-white"
+                >
+                  Cancel
+                </button>
+              </div>
+            </form>
+          )}
 
           {activeYamlPolicy ? (
             <pre className="overflow-x-auto rounded-lg border border-white/[0.06] bg-[#090B10] p-3.5 font-mono text-[11px] leading-relaxed text-slate-200">
@@ -868,11 +1097,120 @@ export const PolicyView: React.FC<PolicyViewProps> = ({
 
       {/* Rules Table */}
       <div className="rounded-xl border border-white/[0.08] bg-[#11151D] overflow-hidden">
-        <div className="border-b border-white/[0.08] px-5 py-4">
+        <div className="border-b border-white/[0.08] px-5 py-4 flex flex-wrap items-center justify-between gap-3">
           <h2 className="font-display text-base font-semibold text-white">
             Active governance rules ({summary.activeRuleCount} / {rules.length})
           </h2>
+          {onCreatePolicyRule && (
+            <button
+              type="button"
+              onClick={() => {
+                setRuleError('');
+                setShowRuleForm((v) => !v);
+              }}
+              className="inline-flex items-center gap-1.5 rounded-lg bg-sky-500 px-3 py-1.5 text-xs font-semibold text-slate-950 hover:bg-sky-400 whitespace-nowrap"
+            >
+              <Plus className="w-3.5 h-3.5" aria-hidden="true" />
+              <span>{showRuleForm ? 'Close form' : 'Create rule'}</span>
+            </button>
+          )}
         </div>
+
+        {ruleNotice && (
+          <div
+            role="status"
+            className="border-b border-emerald-500/20 bg-emerald-500/10 px-5 py-2.5 text-xs text-emerald-300"
+          >
+            {ruleNotice}
+          </div>
+        )}
+
+        {showRuleForm && onCreatePolicyRule && (
+          <form
+            onSubmit={handleCreateRuleSubmit}
+            className="border-b border-white/[0.08] bg-[#090B10] px-5 py-4 space-y-3"
+          >
+            <div className="grid grid-cols-1 gap-3 md:grid-cols-12">
+              <div className="md:col-span-4">
+                <label htmlFor="rule-name" className="block text-[11px] text-slate-400">
+                  Rule name
+                </label>
+                <input
+                  id="rule-name"
+                  type="text"
+                  required
+                  value={ruleName}
+                  onChange={(e) => setRuleName(e.target.value)}
+                  placeholder="e.g. Block unapproved export to external LLM"
+                  className="mt-1 w-full rounded-lg border border-white/15 bg-[#11151D] px-3 py-1.5 text-xs text-white focus:border-sky-500 focus:outline-none"
+                />
+              </div>
+              <div className="md:col-span-3">
+                <label htmlFor="rule-scope" className="block text-[11px] text-slate-400">
+                  Scope
+                </label>
+                <input
+                  id="rule-scope"
+                  type="text"
+                  value={ruleScope}
+                  onChange={(e) => setRuleScope(e.target.value)}
+                  placeholder="All agents · MCP tools"
+                  className="mt-1 w-full rounded-lg border border-white/15 bg-[#11151D] px-3 py-1.5 font-mono text-xs text-white focus:border-sky-500 focus:outline-none"
+                />
+              </div>
+              <div className="md:col-span-2">
+                <label htmlFor="rule-action" className="block text-[11px] text-slate-400">
+                  Action
+                </label>
+                <select
+                  id="rule-action"
+                  value={ruleAction}
+                  onChange={(e) => setRuleAction(e.target.value as PolicyAction)}
+                  className="mt-1 w-full rounded-lg border border-white/15 bg-[#11151D] px-2.5 py-1.5 font-mono text-xs text-white focus:border-sky-500 focus:outline-none"
+                >
+                  <option value="block">block</option>
+                  <option value="redact">redact</option>
+                  <option value="allow">allow</option>
+                </select>
+              </div>
+              <div className="md:col-span-3">
+                <label htmlFor="rule-condition" className="block text-[11px] text-slate-400">
+                  Condition
+                </label>
+                <input
+                  id="rule-condition"
+                  type="text"
+                  required
+                  value={ruleCondition}
+                  onChange={(e) => setRuleCondition(e.target.value)}
+                  placeholder="e.g. classification == pii && egress == external"
+                  className="mt-1 w-full rounded-lg border border-white/15 bg-[#11151D] px-3 py-1.5 text-xs text-white focus:border-sky-500 focus:outline-none"
+                />
+              </div>
+            </div>
+            {ruleError && (
+              <p role="alert" className="text-xs text-rose-400">
+                {ruleError}
+              </p>
+            )}
+            <div className="flex items-center gap-2">
+              <button
+                type="submit"
+                disabled={ruleBusy}
+                className="rounded-lg bg-sky-500 px-3.5 py-1.5 text-xs font-semibold text-slate-950 hover:bg-sky-400 disabled:opacity-50"
+              >
+                {ruleBusy ? 'Creating...' : 'Save governance rule'}
+              </button>
+              <button
+                type="button"
+                onClick={() => setShowRuleForm(false)}
+                className="rounded-lg border border-white/15 bg-[#11151D] px-3.5 py-1.5 text-xs font-medium text-slate-300 hover:text-white"
+              >
+                Cancel
+              </button>
+            </div>
+          </form>
+        )}
         <div className="overflow-x-auto">
           <table className="w-full text-left text-xs">
             <thead>

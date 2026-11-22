@@ -2,6 +2,8 @@ import crypto from 'node:crypto';
 import type {
   ActivityEvent,
   Agent,
+  AgentStatus,
+  AgentType,
   AllInOneRunResult,
   AllInOneStageResult,
   AuditChainIntegrity,
@@ -9,6 +11,7 @@ import type {
   Connector,
   ControlItem,
   DataSource,
+  DemoRequestRecord,
   EnforcementAction,
   EnterpriseSsoConfig,
   EvidenceItem,
@@ -26,12 +29,14 @@ import type {
   PlaybookDefinition,
   PlaybookExecutionRecord,
   PlaybookId,
+  PolicyAction,
   PolicyMode,
   PolicyRule,
   PolicySimulationEvent,
   ReleaseGateCheck,
   RetentionPolicyConfig,
   RiskFactorInputs,
+  RiskLevel,
   RiskTrendPoint,
   RolloutStage,
   ScimDirectoryUser,
@@ -102,6 +107,7 @@ import type {
   TenantRecord,
   UserRecord,
 } from './types.ts';
+import { FileStatePersistence } from './persistence.ts';
 
 export class TenantIsolationError extends Error {
   constructor(message: string) {
@@ -313,12 +319,31 @@ export class TenantDataStore {
     tenant_northwind_eu: 365,
   };
   private lastAllInOneRuns: Record<string, AllInOneRunResult> = {};
+  private mcpServers: McpServer[] = structuredClone(MCP_SERVERS);
+  private models: ModelAsset[] = structuredClone(MODELS);
+  private dataSources: DataSource[] = structuredClone(DATA_SOURCES);
+  private demoRequests: DemoRequestRecord[] = [];
   private nextTicketNum = 4201;
   private nextSnowNum = 8840;
+  private persistence: FileStatePersistence;
+  private hydrating = false;
 
   public registry = new ConnectorRegistry();
 
-  constructor() {
+  constructor(options?: { persist?: boolean; stateFilePath?: string }) {
+    this.persistence = new FileStatePersistence({
+      enabled: options?.persist ?? false,
+      filePath: options?.stateFilePath,
+    });
+    const loaded = this.persistence.load();
+    if (loaded && this.hydrateFromSnapshot(loaded.data)) {
+      return;
+    }
+    this.initializeSeedState();
+    this.persistState();
+  }
+
+  private initializeSeedState() {
     this.seedConnectorsAndCredentials();
     this.seedSecurityGraph();
     this.enrichSeedFindings();
@@ -327,6 +352,178 @@ export class TenantDataStore {
     this.seedGovernanceEvidenceAndGateway();
     this.seedInitialAuditEvents();
     this.seedEnterpriseState();
+  }
+
+  private persistState() {
+    if (this.hydrating || !this.persistence.isEnabled()) return;
+    this.persistence.save({
+      tenants: this.tenants,
+      users: this.users,
+      memberships: this.memberships,
+      sessions: Array.from(this.sessions.entries()),
+      agents: this.agents,
+      findings: this.findings,
+      policyModes: this.policyModes,
+      policyRules: this.policyRules,
+      activity: this.activity,
+      connectors: this.connectors,
+      credentials: this.credentials,
+      graphNodes: this.graphNodes,
+      graphEdges: this.graphEdges,
+      removedEdgeBackups: Array.from(this.removedEdgeBackups.entries()),
+      auditEvents: this.auditEvents,
+      evidenceRecords: this.evidenceRecords,
+      gatewayEvents: this.gatewayEvents,
+      gatewayPolicies: this.gatewayPolicies,
+      retentionConfigs: this.retentionConfigs,
+      rolloutStages: this.rolloutStages,
+      killSwitches: this.killSwitches,
+      playbookExecutions: this.playbookExecutions,
+      replayNonces: Array.from(this.replayNonces),
+      ssoConfigs: this.ssoConfigs,
+      scimDirectory: this.scimDirectory,
+      auditRetentionDays: this.auditRetentionDays,
+      lastAllInOneRuns: this.lastAllInOneRuns,
+      mcpServers: this.mcpServers,
+      models: this.models,
+      dataSources: this.dataSources,
+      demoRequests: this.demoRequests,
+      nextTicketNum: this.nextTicketNum,
+      nextSnowNum: this.nextSnowNum,
+    });
+  }
+
+  private hydrateFromSnapshot(data: Record<string, unknown>): boolean {
+    try {
+      this.hydrating = true;
+      if (Array.isArray(data.tenants)) this.tenants = data.tenants as TenantRecord[];
+      if (Array.isArray(data.users)) this.users = data.users as UserRecord[];
+      if (Array.isArray(data.memberships)) this.memberships = data.memberships as TenantMembership[];
+      if (Array.isArray(data.sessions)) {
+        this.sessions = new Map(data.sessions as Array<[string, SessionRecord]>);
+      }
+      if (Array.isArray(data.agents)) this.agents = data.agents as Agent[];
+      if (Array.isArray(data.findings)) this.findings = data.findings as Finding[];
+      if (data.policyModes) this.policyModes = data.policyModes as Record<string, PolicyMode>;
+      if (data.policyRules) this.policyRules = data.policyRules as Record<string, PolicyRule[]>;
+      if (Array.isArray(data.activity)) this.activity = data.activity as ActivityEvent[];
+      if (Array.isArray(data.connectors)) this.connectors = data.connectors as ConnectorRecord[];
+      if (Array.isArray(data.credentials)) {
+        this.credentials = data.credentials as EncryptedCredentialRecord[];
+      }
+      if (Array.isArray(data.graphNodes)) this.graphNodes = data.graphNodes as GraphNode[];
+      if (Array.isArray(data.graphEdges)) this.graphEdges = data.graphEdges as GraphEdge[];
+      if (Array.isArray(data.removedEdgeBackups)) {
+        this.removedEdgeBackups = new Map(data.removedEdgeBackups as Array<[string, GraphEdge]>);
+      }
+      if (Array.isArray(data.auditEvents)) this.auditEvents = data.auditEvents as AuditEvent[];
+      if (Array.isArray(data.evidenceRecords)) {
+        this.evidenceRecords = data.evidenceRecords as EvidenceRecord[];
+      }
+      if (Array.isArray(data.gatewayEvents)) this.gatewayEvents = data.gatewayEvents as GatewayEvent[];
+      if (data.gatewayPolicies) {
+        this.gatewayPolicies = data.gatewayPolicies as Record<string, GatewayPolicyDefinition[]>;
+      }
+      if (data.retentionConfigs) {
+        this.retentionConfigs = data.retentionConfigs as Record<string, RetentionPolicyConfig>;
+      }
+      if (data.rolloutStages) this.rolloutStages = data.rolloutStages as Record<string, RolloutStage>;
+      if (data.killSwitches) {
+        this.killSwitches = data.killSwitches as Record<string, KillSwitchState>;
+      }
+      if (Array.isArray(data.playbookExecutions)) {
+        this.playbookExecutions = data.playbookExecutions as PlaybookExecutionRecord[];
+      }
+      if (Array.isArray(data.replayNonces)) {
+        this.replayNonces = new Set(data.replayNonces as string[]);
+      }
+      if (data.ssoConfigs) {
+        this.ssoConfigs = data.ssoConfigs as Record<string, EnterpriseSsoConfig>;
+      }
+      if (Array.isArray(data.scimDirectory)) {
+        this.scimDirectory = data.scimDirectory as ScimDirectoryUser[];
+      }
+      if (data.auditRetentionDays) {
+        this.auditRetentionDays = data.auditRetentionDays as Record<string, number>;
+      }
+      if (data.lastAllInOneRuns) {
+        this.lastAllInOneRuns = data.lastAllInOneRuns as Record<string, AllInOneRunResult>;
+      }
+      if (Array.isArray(data.mcpServers)) this.mcpServers = data.mcpServers as McpServer[];
+      if (Array.isArray(data.models)) this.models = data.models as ModelAsset[];
+      if (Array.isArray(data.dataSources)) this.dataSources = data.dataSources as DataSource[];
+      if (Array.isArray(data.demoRequests)) {
+        this.demoRequests = data.demoRequests as DemoRequestRecord[];
+      }
+      if (typeof data.nextTicketNum === 'number') this.nextTicketNum = data.nextTicketNum;
+      if (typeof data.nextSnowNum === 'number') this.nextSnowNum = data.nextSnowNum;
+      return true;
+    } catch {
+      return false;
+    } finally {
+      this.hydrating = false;
+    }
+  }
+
+  public getPersistenceInfo(): { enabled: boolean; filePath: string } {
+    return {
+      enabled: this.persistence.isEnabled(),
+      filePath: this.persistence.filePath,
+    };
+  }
+
+  public resetToSeedState(actor: { id: string; email: string; role: Role }, tenantId: string): void {
+    this.persistence.clear();
+    const fresh = new TenantDataStore({ persist: false });
+    this.hydrateFromSnapshot({
+      tenants: fresh.tenants,
+      users: fresh.users,
+      memberships: fresh.memberships,
+      sessions: Array.from(this.sessions.entries()),
+      agents: fresh.agents,
+      findings: fresh.findings,
+      policyModes: fresh.policyModes,
+      policyRules: fresh.policyRules,
+      activity: fresh.activity,
+      connectors: fresh.connectors,
+      credentials: fresh.credentials,
+      graphNodes: fresh.graphNodes,
+      graphEdges: fresh.graphEdges,
+      removedEdgeBackups: [],
+      auditEvents: fresh.auditEvents,
+      evidenceRecords: fresh.evidenceRecords,
+      gatewayEvents: fresh.gatewayEvents,
+      gatewayPolicies: fresh.gatewayPolicies,
+      retentionConfigs: fresh.retentionConfigs,
+      rolloutStages: fresh.rolloutStages,
+      killSwitches: fresh.killSwitches,
+      playbookExecutions: fresh.playbookExecutions,
+      replayNonces: [],
+      ssoConfigs: fresh.ssoConfigs,
+      scimDirectory: fresh.scimDirectory,
+      auditRetentionDays: fresh.auditRetentionDays,
+      lastAllInOneRuns: {},
+      mcpServers: fresh.mcpServers,
+      models: fresh.models,
+      dataSources: fresh.dataSources,
+      demoRequests: [],
+      nextTicketNum: 4201,
+      nextSnowNum: 8840,
+    });
+    this.recordAuditEvent({
+      tenantId,
+      actorId: actor.id,
+      actorEmail: actor.email,
+      actorRole: actor.role,
+      action: 'system.sandbox_reset',
+      resourceType: 'control_plane',
+      resourceId: tenantId,
+      outcome: 'allowed',
+      before: null,
+      after: { resetAt: new Date().toISOString() },
+      reason: 'Administrator reset sandbox state to baseline seed posture',
+    });
+    this.persistState();
   }
 
   /**
@@ -1421,13 +1618,36 @@ export class TenantDataStore {
       event_hash,
     };
     this.auditEvents.unshift(full);
+    this.persistState();
     return full;
   }
 
-  getAuditEvents(tenantId: string): AuditEvent[] {
-    return this.withTenantContext(tenantId, (tid) =>
-      this.auditEvents.filter((e) => e.tenantId === tid)
-    );
+  getAuditEvents(
+    tenantId: string,
+    filters?: { search?: string; outcome?: 'allowed' | 'denied' | 'all' }
+  ): AuditEvent[] {
+    return this.withTenantContext(tenantId, (tid) => {
+      const search = filters?.search?.trim().toLowerCase() ?? '';
+      const outcome = filters?.outcome;
+      return this.auditEvents.filter((e) => {
+        if (e.tenantId !== tid) return false;
+        if (outcome && outcome !== 'all' && e.outcome !== outcome) return false;
+        if (search) {
+          const hay = [
+            e.action,
+            e.actorEmail,
+            e.actorRole,
+            e.resourceType,
+            e.resourceId,
+            e.reason ?? '',
+          ]
+            .join(' ')
+            .toLowerCase();
+          if (!hay.includes(search)) return false;
+        }
+        return true;
+      });
+    });
   }
 
   getAuditIntegrity(tenantId: string): AuditChainIntegrity {
@@ -2984,6 +3204,7 @@ export class TenantDataStore {
     activity: ActivityEvent[];
     trendSeries: RiskTrendPoint[];
     connectors: Connector[];
+    demoRequests: DemoRequestRecord[];
   } {
     return this.withTenantContext(tenantId, (tid) => {
       const tenant = this.getTenant(tid);
@@ -3020,9 +3241,9 @@ export class TenantDataStore {
       return {
         tenant,
         agents,
-        mcpServers: MCP_SERVERS,
-        models: MODELS,
-        dataSources: DATA_SOURCES,
+        mcpServers: this.mcpServers,
+        models: this.models,
+        dataSources: this.dataSources,
         findings,
         controls,
         evidence,
@@ -3030,6 +3251,7 @@ export class TenantDataStore {
         activity,
         trendSeries: RISK_TREND_SERIES[tid] ?? RISK_TREND_SERIES.tenant_northwind,
         connectors,
+        demoRequests: this.demoRequests,
       };
     });
   }
@@ -4516,9 +4738,521 @@ export class TenantDataStore {
       };
 
       this.lastAllInOneRuns[tid] = result;
+      this.persistState();
       return result;
+    });
+  }
+
+  // ---- Agent CRUD, Custom Policy Rules, Compliance Attestation & Demo Requests ----
+
+  listAuthorizedTenantsForUser(userId: string): TenantRecord[] {
+    const allowedIds = new Set(
+      this.getMembershipsForUser(userId).map((m) => m.tenantId)
+    );
+    return this.tenants.filter((t) => allowedIds.has(t.id));
+  }
+
+  submitDemoRequest(input: {
+    name: string;
+    email: string;
+    company: string;
+  }): DemoRequestRecord {
+    const name = input.name.trim();
+    const email = input.email.trim();
+    const company = input.company.trim();
+    if (!name || !company) {
+      throw new Error('Full name and organization are required.');
+    }
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+      throw new Error('A valid work email address is required.');
+    }
+    const record: DemoRequestRecord = {
+      id: `req_${crypto.randomUUID().slice(0, 8)}`,
+      name,
+      email,
+      company,
+      submittedAt: new Date().toISOString(),
+      status: 'received',
+    };
+    this.demoRequests.unshift(record);
+    this.recordAuditEvent({
+      tenantId: 'tenant_northwind',
+      actorId: 'usr_inbound_lead',
+      actorEmail: email,
+      actorRole: 'anonymous',
+      action: 'landing.demo_request_submitted',
+      resourceType: 'demo_request',
+      resourceId: record.id,
+      outcome: 'allowed',
+      before: null,
+      after: { name, company, status: record.status },
+      reason: 'Inbound briefing request submitted from Eyes of Agent landing page',
+    });
+    this.persistState();
+    return record;
+  }
+
+  listDemoRequests(): DemoRequestRecord[] {
+    return [...this.demoRequests];
+  }
+
+  createAgent(
+    tenantId: string,
+    input: {
+      name: string;
+      owner?: string;
+      ownerTeam?: string;
+      type?: AgentType;
+      identity?: string;
+      businessService?: string;
+      tools?: string[];
+      permissions?: string[];
+      dataSources?: string[];
+      models?: string[];
+      mcpServers?: string[];
+    },
+    actor: { id: string; email: string; role: Role }
+  ): Agent {
+    return this.withTenantContext(tenantId, (tid) => {
+      const name = input.name.trim();
+      if (!name) throw new Error('Agent name is required.');
+      const slug = name
+        .toLowerCase()
+        .replace(/[^a-z0-9]+/g, '_')
+        .replace(/^_|_$/g, '');
+      const agentId = `agent_${slug}_${crypto.randomUUID().slice(0, 4)}`;
+      const owner = input.owner?.trim() || 'unassigned';
+      const ownerTeam = input.ownerTeam?.trim() || 'Unassigned';
+      const type: AgentType =
+        input.type ?? (owner === 'unassigned' ? 'Unowned' : 'Internal agent');
+      const identity = input.identity?.trim() || `svc-${slug.replace(/_/g, '-')}`;
+      const tools =
+        input.tools && input.tools.length > 0 ? input.tools : ['read_records'];
+      const permissions =
+        input.permissions && input.permissions.length > 0
+          ? input.permissions
+          : ['workspace:read'];
+      const dataSourceIds =
+        input.dataSources && input.dataSources.length > 0
+          ? input.dataSources
+          : [this.dataSources[0]?.id ?? 'ds_snowflake'];
+      const modelIds =
+        input.models && input.models.length > 0
+          ? input.models
+          : [this.models[0]?.id ?? 'model_gpt41'];
+      const mcpIds =
+        input.mcpServers && input.mcpServers.length > 0
+          ? input.mcpServers
+          : [this.mcpServers[0]?.id ?? 'mcp_finance'];
+
+      const draft: Agent = {
+        id: agentId,
+        tenantId: tid,
+        name,
+        owner,
+        ownerTeam,
+        type,
+        status: 'active',
+        riskScore: 50,
+        riskLevel: 'medium',
+        identity,
+        identityType: 'Service Principal',
+        models: modelIds,
+        mcpServers: mcpIds,
+        tools,
+        dataSources: dataSourceIds,
+        permissions,
+        businessService: input.businessService?.trim() || 'Enterprise Operations',
+        lastSeen: 'Just now',
+        dailyCalls: 120,
+        findings: [],
+      };
+
+      this.agents.unshift(draft);
+
+      // Register in security graph BEFORE risk recomputation so ExposurePaths & BFS include it immediately
+      this.graphNodes.push({
+        id: agentId,
+        tenantId: tid,
+        type: 'AI agent',
+        label: name,
+        riskLevel: 'high',
+        metadata: { owner, type, businessService: draft.businessService },
+      });
+      const identityNodeId = `id_${identity.replace(/[^a-zA-Z0-9_]/g, '_')}`;
+      if (!this.graphNodes.some((n) => n.id === identityNodeId && n.tenantId === tid)) {
+        this.graphNodes.push({
+          id: identityNodeId,
+          tenantId: tid,
+          type: 'Identity',
+          label: identity,
+          riskLevel: 'high',
+          metadata: { identityType: draft.identityType },
+        });
+      }
+      this.graphEdges.push({
+        id: `edge_${agentId}_id`,
+        tenantId: tid,
+        sourceId: agentId,
+        targetId: identityNodeId,
+        type: 'OPERATED_BY',
+      });
+      for (const dsId of dataSourceIds) {
+        const dsNodeId = `data_${dsId}`;
+        if (!this.graphNodes.some((n) => n.id === dsNodeId && n.tenantId === tid)) {
+          const dsObj = this.dataSources.find((d) => d.id === dsId);
+          this.graphNodes.push({
+            id: dsNodeId,
+            tenantId: tid,
+            type: 'Data source',
+            label: dsObj?.name ?? dsId,
+            sensitivity: dsObj?.classification === 'Restricted' ? 'pii' : 'confidential',
+            riskLevel: dsObj?.risk === 'critical' || dsObj?.risk === 'high' ? dsObj.risk : 'medium',
+            metadata: { provider: dsObj?.provider ?? 'Cloud' },
+          });
+        }
+        this.graphEdges.push({
+          id: `edge_${identityNodeId}_${dsNodeId}`,
+          tenantId: tid,
+          sourceId: identityNodeId,
+          targetId: dsNodeId,
+          type: 'CAN_ACCESS',
+        });
+      }
+
+      this.recomputeTenantRiskAssessments(tid, { agentId, overrides: {} });
+
+      const tenant = this.getTenant(tid);
+      tenant.totalDiscoveredAgents += 1;
+      tenant.activeAgents += 1;
+      if (owner === 'unassigned') tenant.unownedAgents += 1;
+      if (type === 'Shadow AI') tenant.shadowAgents += 1;
+
+      const created = this.agents.find((a) => a.id === agentId)!;
+      this.activity.unshift({
+        id: `act_${crypto.randomUUID()}`,
+        tenantId: tid,
+        timestamp: 'Just now',
+        category: 'discovery',
+        title: `Registered AI agent ${created.name}`,
+        detail: `Owner: ${created.owner} · Score ${created.riskScore} (${created.riskLevel})`,
+        severity: created.riskLevel,
+      });
+
+      this.recordAuditEvent({
+        tenantId: tid,
+        actorId: actor.id,
+        actorEmail: actor.email,
+        actorRole: actor.role,
+        action: 'agent.registered',
+        resourceType: 'agent',
+        resourceId: agentId,
+        outcome: 'allowed',
+        before: null,
+        after: {
+          name: created.name,
+          owner: created.owner,
+          type: created.type,
+          riskScore: created.riskScore,
+        },
+        reason: 'Registered AI agent in tenant inventory and security graph',
+      });
+      this.persistState();
+      return created;
+    });
+  }
+
+  updateAgentGovernance(
+    tenantId: string,
+    agentId: string,
+    updates: {
+      owner?: string;
+      ownerTeam?: string;
+      status?: AgentStatus;
+      businessService?: string;
+      permissions?: string[];
+    },
+    actor: { id: string; email: string; role: Role }
+  ): Agent {
+    return this.withTenantContext(tenantId, (tid) => {
+      const idx = this.agents.findIndex((a) => a.id === agentId && a.tenantId === tid);
+      if (idx === -1) throw new Error('Agent not found in tenant scope');
+      const prev = { ...this.agents[idx] };
+
+      const nextOwner = updates.owner !== undefined ? updates.owner.trim() || 'unassigned' : prev.owner;
+      const nextOwnerTeam =
+        updates.ownerTeam !== undefined ? updates.ownerTeam.trim() || 'Platform' : prev.ownerTeam;
+      const nextStatus: AgentStatus = updates.status ?? prev.status;
+      const nextType: AgentType =
+        nextOwner !== 'unassigned' && prev.type === 'Unowned'
+          ? 'Internal agent'
+          : nextOwner === 'unassigned'
+            ? 'Unowned'
+            : prev.type;
+
+      this.agents[idx] = {
+        ...prev,
+        owner: nextOwner,
+        ownerTeam: nextOwnerTeam,
+        status: nextStatus,
+        type: nextType,
+        businessService: updates.businessService?.trim() || prev.businessService,
+        permissions: updates.permissions ?? prev.permissions,
+      };
+
+      this.recomputeTenantRiskAssessments(tid, { agentId, overrides: {} });
+      const updated = this.agents[idx];
+
+      this.activity.unshift({
+        id: `act_${crypto.randomUUID()}`,
+        tenantId: tid,
+        timestamp: 'Just now',
+        category: 'policy',
+        title: `Updated governance for ${updated.name}`,
+        detail: `Status: ${updated.status} · Owner: ${updated.owner} · Score ${updated.riskScore}`,
+        severity: updated.status === 'quarantined' ? 'nominal' : updated.riskLevel,
+      });
+
+      this.recordAuditEvent({
+        tenantId: tid,
+        actorId: actor.id,
+        actorEmail: actor.email,
+        actorRole: actor.role,
+        action: 'agent.governance_updated',
+        resourceType: 'agent',
+        resourceId: agentId,
+        outcome: 'allowed',
+        before: {
+          owner: prev.owner,
+          ownerTeam: prev.ownerTeam,
+          status: prev.status,
+          riskScore: prev.riskScore,
+        },
+        after: {
+          owner: updated.owner,
+          ownerTeam: updated.ownerTeam,
+          status: updated.status,
+          riskScore: updated.riskScore,
+        },
+        reason: 'Updated agent ownership, runtime status, or permission governance',
+      });
+      this.persistState();
+      return updated;
+    });
+  }
+
+  createPolicyRule(
+    tenantId: string,
+    input: {
+      name: string;
+      scope: string;
+      action: 'allow' | 'redact' | 'block';
+      condition: string;
+    },
+    actor: { id: string; email: string; role: Role }
+  ): PolicyRule {
+    return this.withTenantContext(tenantId, (tid) => {
+      const name = input.name.trim();
+      const scope = input.scope.trim();
+      const condition = input.condition.trim();
+      if (!name || !scope || !condition) {
+        throw new Error('Rule name, scope, and condition are required.');
+      }
+      const rule: PolicyRule = {
+        id: `rule_${crypto.randomUUID().slice(0, 8)}`,
+        name,
+        scope,
+        action: input.action,
+        condition,
+        observeHits24h: 0,
+        enabled: true,
+        lastTriggered: 'Just created',
+      };
+      const list = this.policyRules[tid] ?? [];
+      this.policyRules[tid] = [rule, ...list];
+
+      this.recordAuditEvent({
+        tenantId: tid,
+        actorId: actor.id,
+        actorEmail: actor.email,
+        actorRole: actor.role,
+        action: 'policy.rule_created',
+        resourceType: 'policy_rule',
+        resourceId: rule.id,
+        outcome: 'allowed',
+        before: null,
+        after: { name: rule.name, scope: rule.scope, action: rule.action },
+        reason: 'Created custom governance rule in policy engine',
+      });
+      this.persistState();
+      return rule;
+    });
+  }
+
+  createGatewayPolicy(
+    tenantId: string,
+    input: {
+      name: string;
+      agents: string[];
+      tools: string[];
+      dataClassification: string[];
+      decision: EnforcementAction;
+      strategy?: 'tokenization' | 'masking' | 'strict_block' | 'step_up_mfa' | 'downgrade_readonly';
+    },
+    actor: { id: string; email: string; role: Role }
+  ): GatewayPolicyDefinition {
+    return this.withTenantContext(tenantId, (tid) => {
+      const name = input.name.trim();
+      if (!name) throw new Error('Policy name is required.');
+      const id = name
+        .toLowerCase()
+        .replace(/[^a-z0-9]+/g, '_')
+        .replace(/^_|_$/g, '');
+      const yaml = [
+        'policy:',
+        `  id: ${id}`,
+        `  name: ${name}`,
+        '  scope:',
+        `    agents: [${input.agents.join(', ')}]`,
+        `    tools: [${input.tools.join(', ')}]`,
+        `    data_classification: [${input.dataClassification.join(', ')}]`,
+        `  decision: ${input.decision}`,
+        ...(input.strategy ? [`  strategy: ${input.strategy}`] : []),
+        `  mode: ${this.policyModes[tid] ?? 'observe'}`,
+      ].join('\n');
+
+      const policyAction: PolicyAction =
+        input.decision === 'allow' || input.decision === 'redact' || input.decision === 'block'
+          ? input.decision
+          : input.decision === 'downgrade' ||
+              input.decision === 'approve' ||
+              input.decision === 'step_up_authenticate'
+            ? 'redact'
+            : 'block';
+
+      const severity: RiskLevel =
+        policyAction === 'block' ? 'critical' : policyAction === 'redact' ? 'high' : 'low';
+
+      const policy: GatewayPolicyDefinition = {
+        id,
+        name,
+        scope: {
+          agents: input.agents,
+          tools: input.tools,
+          data_classification: input.dataClassification,
+        },
+        decision: policyAction,
+        mode: this.policyModes[tid] ?? 'observe',
+        severity,
+        actions: ['log_decision', 'attach_evidence'],
+        enabled: true,
+        observeHits24h: 0,
+        lastTriggered: 'Just created',
+        yaml,
+      };
+      const list = this.gatewayPolicies[tid] ?? [];
+      this.gatewayPolicies[tid] = [policy, ...list];
+
+      this.recordAuditEvent({
+        tenantId: tid,
+        actorId: actor.id,
+        actorEmail: actor.email,
+        actorRole: actor.role,
+        action: 'policy.gateway_yaml_created',
+        resourceType: 'gateway_policy',
+        resourceId: policy.id,
+        outcome: 'allowed',
+        before: null,
+        after: { id: policy.id, decision: policy.decision },
+        reason: 'Created custom zero-trust PEP/PDP gateway policy',
+      });
+      this.persistState();
+      return policy;
+    });
+  }
+
+  attestComplianceControl(
+    tenantId: string,
+    controlId: string,
+    input: { title?: string; summary: string; source?: string },
+    actor: { id: string; email: string; role: Role }
+  ): { control: ControlItem; evidenceRecord: EvidenceRecord } {
+    return this.withTenantContext(tenantId, (tid) => {
+      const ctrl = GOVERNANCE_CONTROLS.find(
+        (c) => c.id === controlId || c.code === controlId
+      );
+      if (!ctrl) throw new Error('Compliance control not found.');
+      const summary = input.summary.trim();
+      if (!summary) throw new Error('Attestation evidence summary is required.');
+
+      const prevHead = this.evidenceRecords.find((e) => e.tenant_id === tid);
+      const record = createChainedEvidenceRecord({
+        tenantId: tid,
+        controlId: ctrl.code,
+        framework: ctrl.framework,
+        mappedFrameworks: [ctrl.framework],
+        evidenceType: ctrl.requiredEvidenceTypes?.[0] ?? 'approval_record',
+        title: input.title?.trim() || `Manual control attestation for ${ctrl.code}`,
+        summary,
+        source: input.source?.trim() || `attestation:${actor.email}`,
+        resourceId: ctrl.id,
+        previousHash: prevHead?.content_hash ?? 'sha256:genesis',
+        payload: {
+          controlId: ctrl.id,
+          code: ctrl.code,
+          attestedBy: actor.email,
+          summary,
+        },
+      });
+      this.evidenceRecords.unshift(record);
+
+      // Resolve any open findings blocking this control if operator attests control verification
+      for (let i = 0; i < this.findings.length; i += 1) {
+        const f = this.findings[i];
+        if (
+          f.tenantId === tid &&
+          f.status !== 'remediated' &&
+          f.frameworks.some((fw) => fw.includes(ctrl.code) || fw.includes(ctrl.framework))
+        ) {
+          this.findings[i] = {
+            ...f,
+            status: 'in_progress',
+          };
+        }
+      }
+
+      this.recordAuditEvent({
+        tenantId: tid,
+        actorId: actor.id,
+        actorEmail: actor.email,
+        actorRole: actor.role,
+        action: 'compliance.control_attested',
+        resourceType: 'compliance_control',
+        resourceId: ctrl.code,
+        outcome: 'allowed',
+        before: null,
+        after: { evidenceId: record.id, title: record.title, framework: ctrl.framework },
+        evidence_id: record.id,
+        reason: summary,
+      });
+
+      const updatedControl: ControlItem =
+        this.getControlsForTenant(tid).find((c) => c.id === ctrl.id) ?? {
+          ...ctrl,
+          status: 'covered',
+          evidenceCount: 1,
+          mappedFindingIds: [],
+          lastVerified: new Date().toISOString().slice(0, 10),
+        };
+      this.persistState();
+      return { control: updatedControl, evidenceRecord: record };
     });
   }
 }
 
-export const store = new TenantDataStore();
+const isNodeTestRunner =
+  process.argv.includes('--test') ||
+  process.execArgv.includes('--test') ||
+  process.env.EOA_DISABLE_PERSIST === '1';
+
+export const store = new TenantDataStore({ persist: !isNodeTestRunner });

@@ -10,6 +10,10 @@ interface AuditLogViewProps {
   retentionDays?: number;
   canAdminTenant?: boolean;
   onRefreshAudit: () => Promise<void>;
+  onFilterAuditEvents?: (filters: {
+    search?: string;
+    outcome?: 'all' | 'allowed' | 'denied';
+  }) => Promise<void>;
   onUpdateRetentionDays?: (days: number) => Promise<void>;
   onExportAuditLedger?: () => Promise<{
     tenantId: string;
@@ -28,12 +32,42 @@ export const AuditLogView: React.FC<AuditLogViewProps> = ({
   retentionDays = 365,
   canAdminTenant = false,
   onRefreshAudit,
+  onFilterAuditEvents,
   onUpdateRetentionDays,
   onExportAuditLedger,
 }) => {
   const [probeResult, setProbeResult] = useState<string>('');
   const [exportStatus, setExportStatus] = useState<string>('');
   const [expandedId, setExpandedId] = useState<string | null>(null);
+  const [searchInput, setSearchInput] = useState<string>('');
+  const [outcomeFilter, setOutcomeFilter] = useState<'all' | 'allowed' | 'denied'>('all');
+  const [filterBusy, setFilterBusy] = useState(false);
+
+  const handleApplyFilter = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!onFilterAuditEvents) return;
+    setFilterBusy(true);
+    try {
+      await onFilterAuditEvents({
+        search: searchInput.trim() || undefined,
+        outcome: outcomeFilter,
+      });
+    } finally {
+      setFilterBusy(false);
+    }
+  };
+
+  const handleClearFilter = async () => {
+    setSearchInput('');
+    setOutcomeFilter('all');
+    if (!onFilterAuditEvents) return;
+    setFilterBusy(true);
+    try {
+      await onFilterAuditEvents({ outcome: 'all' });
+    } finally {
+      setFilterBusy(false);
+    }
+  };
 
   const handleCrossTenantProbe = async () => {
     const forgedTenant =
@@ -160,6 +194,54 @@ export const AuditLogView: React.FC<AuditLogViewProps> = ({
       )}
 
       <div className="overflow-hidden rounded-xl border border-white/[0.08] bg-[#11151D]">
+        {onFilterAuditEvents && (
+          <form
+            onSubmit={handleApplyFilter}
+            className="flex flex-wrap items-center justify-between gap-3 border-b border-white/[0.08] px-4 py-3"
+          >
+            <div className="flex flex-1 flex-wrap items-center gap-2.5 min-w-[240px]">
+              <input
+                id="audit-search-input"
+                type="search"
+                aria-label="Search audit events"
+                value={searchInput}
+                onChange={(e) => setSearchInput(e.target.value)}
+                placeholder="Filter by actor, action, resource, or reason..."
+                className="w-full max-w-sm rounded-lg border border-white/15 bg-[#090B10] px-3 py-1.5 text-xs text-white placeholder-slate-500 focus:border-sky-500 focus:outline-none"
+              />
+              <select
+                id="audit-outcome-filter"
+                aria-label="Filter by outcome"
+                value={outcomeFilter}
+                onChange={(e) =>
+                  setOutcomeFilter(e.target.value as 'all' | 'allowed' | 'denied')
+                }
+                className="rounded-lg border border-white/15 bg-[#090B10] px-2.5 py-1.5 font-mono text-xs text-white focus:border-sky-500 focus:outline-none"
+              >
+                <option value="all">All outcomes</option>
+                <option value="allowed">Allowed</option>
+                <option value="denied">Denied</option>
+              </select>
+            </div>
+            <div className="flex items-center gap-2">
+              <button
+                type="submit"
+                disabled={filterBusy}
+                className="rounded-lg bg-sky-500 px-3 py-1.5 text-xs font-semibold text-slate-950 hover:bg-sky-400 disabled:opacity-50"
+              >
+                {filterBusy ? 'Filtering...' : 'Filter'}
+              </button>
+              <button
+                type="button"
+                disabled={filterBusy}
+                onClick={handleClearFilter}
+                className="rounded-lg border border-white/15 bg-[#090B10] px-3 py-1.5 text-xs font-medium text-slate-300 hover:text-white disabled:opacity-50"
+              >
+                Clear
+              </button>
+            </div>
+          </form>
+        )}
         <div className="overflow-x-auto">
           <table className="w-full text-left text-xs">
             <thead>
@@ -172,6 +254,13 @@ export const AuditLogView: React.FC<AuditLogViewProps> = ({
               </tr>
             </thead>
             <tbody className="divide-y divide-white/[0.06]">
+              {events.length === 0 && (
+                <tr>
+                  <td colSpan={5} className="px-4 py-6 text-center text-xs text-slate-400">
+                    No audit events match the active filter criteria.
+                  </td>
+                </tr>
+              )}
               {events.map((ev) => {
                 const isExpanded = expandedId === ev.id;
                 return (
