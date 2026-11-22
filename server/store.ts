@@ -1302,7 +1302,7 @@ export class TenantDataStore {
   private seedSecurityGraph() {
     // Northwind Financial Graph: Full multi-hop IAM -> Resource -> DataObject paths
     const nwNodes: GraphNode[] = [
-      { id: 'agent_finance_copilot', tenantId: 'tenant_northwind', type: 'AI agent', label: 'Finance Copilot', riskLevel: 'critical', metadata: { owner: 'finance-ops@northwind.com', score: 92 } },
+      { id: 'agent_finance_copilot', tenantId: 'tenant_northwind', type: 'AI agent', label: 'Finance Copilot', riskLevel: 'high', metadata: { owner: 'finance-ops@northwind.com', score: 82 } },
       { id: 'node_nw_id_finance', tenantId: 'tenant_northwind', type: 'Identity', label: 'svc-finance-copilot', riskLevel: 'critical', metadata: { kind: 'Service Principal' } },
       { id: 'node_nw_role_payroll', tenantId: 'tenant_northwind', type: 'Role', label: 'Payroll Exporter', riskLevel: 'critical', metadata: { provider: 'AWS IAM' } },
       { id: 'node_nw_perm_s3', tenantId: 'tenant_northwind', type: 'Permission', label: 's3:GetObject', riskLevel: 'critical', metadata: { action: 's3:GetObject' } },

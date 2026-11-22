@@ -91,7 +91,6 @@ export const AllInOneView: React.FC<AllInOneViewProps> = ({
   const [feedback, setFeedback] = useState<string>('');
 
   const tenantAgents = agents.filter((a) => a.tenantId === tenant.id);
-  const shadowAgents = tenantAgents.filter((a) => a.type === 'Shadow AI').length;
   const tenantConnectors = connectors.filter((c) => c.tenantId === tenant.id);
   const healthyConnectors = tenantConnectors.filter((c) => c.status === 'healthy').length;
   const openFindings = findings.filter(
@@ -323,10 +322,10 @@ export const AllInOneView: React.FC<AllInOneViewProps> = ({
             </div>
             <div className="mt-3 flex items-baseline gap-3">
               <span className="font-mono text-2xl font-semibold text-white tabular-nums">
-                {tenantAgents.length}
+                {tenant.totalDiscoveredAgents}
               </span>
               <span className="text-xs text-slate-400">
-                discovered agents · {shadowAgents} shadow AI
+                discovered agents · {tenant.shadowAgents} shadow AI ({tenantAgents.length} profiled)
               </span>
             </div>
             <ul className="mt-3 space-y-1.5 border-t border-white/[0.06] pt-3 text-xs text-slate-300">

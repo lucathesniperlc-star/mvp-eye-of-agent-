@@ -29,7 +29,7 @@ export const DEMO_TOUR_STEPS: TourStep[] = [
     step: 3,
     title: 'Identify Finance Copilot',
     narrative:
-      'Finance Copilot carries a 92 Critical risk score because svc-finance-copilot holds direct payroll export permissions.',
+      'Finance Copilot carries an 82 High risk score because svc-finance-copilot holds direct payroll export and S3 object access.',
     screen: 'agent-detail',
     agentId: 'agent_finance_copilot',
   },
@@ -37,7 +37,7 @@ export const DEMO_TOUR_STEPS: TourStep[] = [
     step: 4,
     title: 'Trace the exposure path',
     narrative:
-      'In under 10 seconds, trace the blast radius: Finance Copilot → svc-finance-copilot → finance-mcp → S3 payroll bucket (1.4M objects).',
+      'In under 10 seconds, trace the 5-hop blast radius: Finance Copilot → svc-finance-copilot → finance-mcp → S3 payroll bucket → External Frontier LLM.',
     screen: 'exposure',
     agentId: 'agent_finance_copilot',
   },

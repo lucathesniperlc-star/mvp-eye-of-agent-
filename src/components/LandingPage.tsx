@@ -23,9 +23,9 @@ const PREVIEW_NODES = [
     stage: 'AI Agent',
     title: 'Finance Copilot',
     detail: 'Owner: finance-ops@northwind.com · 4,820 calls/day',
-    risk: 'Risk Score 92 · Critical',
+    risk: 'Risk Score 82 · High',
     icon: Eye,
-    accent: 'text-rose-400',
+    accent: 'text-amber-400',
   },
   {
     id: 'identity',
@@ -122,52 +122,45 @@ export const LandingPage: React.FC<LandingPageProps> = ({ onLaunchDemo }) => {
     <div className="min-h-screen bg-[#090B10] text-slate-100">
       {/* Top Bar Contract: 3 zones separated by gap-8 */}
       <header className="sticky top-0 z-40 border-b border-white/[0.08] bg-[#090B10]/95 backdrop-blur-md">
-        <div className="mx-auto flex max-w-7xl flex-wrap items-center justify-between gap-x-8 gap-y-2 px-6 py-4">
+        <div className="mx-auto flex max-w-7xl items-center justify-between gap-8 px-6 py-3.5">
           <a
             href="#top"
-            className="order-1 font-display text-lg font-semibold tracking-tight text-white whitespace-nowrap shrink-0"
+            className="font-display text-lg font-semibold tracking-tight text-white whitespace-nowrap shrink-0"
           >
             Eyes of Agent
           </a>
 
           <nav
             aria-label="Primary navigation"
-            className="order-3 flex w-full flex-wrap items-center gap-x-6 gap-y-1 text-sm font-medium text-slate-400 md:order-2 md:w-auto md:justify-center"
+            className="hidden md:flex items-center gap-7 text-sm font-medium text-slate-400"
           >
             <a
               href="#problem"
-              className="hidden lg:inline hover:text-white transition-colors whitespace-nowrap shrink-0"
+              className="hover:text-white transition-colors whitespace-nowrap shrink-0"
             >
               Problem
             </a>
             <a
               href="#capabilities"
-              className="hidden lg:inline hover:text-white transition-colors whitespace-nowrap shrink-0"
+              className="hover:text-white transition-colors whitespace-nowrap shrink-0"
             >
               Capabilities
             </a>
             <a
               href="#how-it-works"
-              className="hidden lg:inline hover:text-white transition-colors whitespace-nowrap shrink-0"
+              className="hover:text-white transition-colors whitespace-nowrap shrink-0"
             >
               How it works
             </a>
             <a
               href="#use-cases"
-              className="hidden lg:inline hover:text-white transition-colors whitespace-nowrap shrink-0"
+              className="hover:text-white transition-colors whitespace-nowrap shrink-0"
             >
               Use cases
             </a>
-            <a
-              href="mailto:lucathesniperlc@gmail.com"
-              className="inline-flex items-center gap-1.5 text-xs sm:text-sm text-sky-400 hover:text-sky-300 transition-colors whitespace-nowrap shrink-0"
-            >
-              <Mail className="w-3.5 h-3.5 shrink-0" aria-hidden="true" />
-              <span>lucathesniperlc@gmail.com</span>
-            </a>
           </nav>
 
-          <div className="order-2 flex items-center shrink-0 md:order-3">
+          <div className="flex items-center shrink-0">
             <button
               type="button"
               onClick={() => onLaunchDemo(false)}
@@ -175,6 +168,19 @@ export const LandingPage: React.FC<LandingPageProps> = ({ onLaunchDemo }) => {
             >
               View interactive demo
             </button>
+          </div>
+        </div>
+
+        <div className="border-t border-white/[0.06] bg-[#0B0E15]/90">
+          <div className="mx-auto flex max-w-7xl flex-wrap items-center justify-between gap-x-6 gap-y-1 px-6 py-2 text-xs text-slate-400">
+            <span className="hidden sm:inline">Security architecture &amp; onboarding help</span>
+            <a
+              href="mailto:lucathesniperlc@gmail.com"
+              className="inline-flex items-center gap-1.5 font-medium text-sky-400 hover:text-sky-300 transition-colors whitespace-nowrap"
+            >
+              <Mail className="w-3.5 h-3.5 shrink-0" aria-hidden="true" />
+              <span>Contact: lucathesniperlc@gmail.com</span>
+            </a>
           </div>
         </div>
       </header>
@@ -243,8 +249,8 @@ export const LandingPage: React.FC<LandingPageProps> = ({ onLaunchDemo }) => {
                         Critical Path: Finance Copilot to S3 Payroll
                       </h2>
                     </div>
-                    <span className="font-mono text-xs font-medium text-rose-400 tabular-nums">
-                      Risk 92 / 100
+                    <span className="font-mono text-xs font-medium text-amber-400 tabular-nums">
+                      Risk 82 / 100
                     </span>
                   </div>
 
